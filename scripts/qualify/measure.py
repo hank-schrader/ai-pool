@@ -80,9 +80,17 @@ def buffer_sizes(log_path):
         text = open(log_path, errors="replace").read()
     except OSError:
         return sizes
+    # sched_reserve runs (and logs) more than once; only its last report counts
+    reserved = {}
     for kind, buffer, mib in re.findall(r"(load_tensors|sched_reserve|llama_kv_cache|llama_context):\s+(\S+) (?:model |compute |KV |output )?buffer size =\s+([\d.]+) MiB", text):
+        if kind == "sched_reserve":
+            reserved[buffer] = float(mib)
+            continue
         key = f"{buffer} {'model' if kind == 'load_tensors' else 'other'}"
         sizes[key] = round(sizes.get(key, 0) + float(mib), 1)
+    for buffer, mib in reserved.items():
+        key = f"{buffer} other"
+        sizes[key] = round(sizes.get(key, 0) + mib, 1)
     return sizes
 
 

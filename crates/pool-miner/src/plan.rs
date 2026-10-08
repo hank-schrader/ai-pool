@@ -178,4 +178,13 @@ mod tests {
         // 8 GB card without RAM to spare: nothing fits
         assert!(plan(&clef, Accelerator::Cuda, 7800, 1000, &HashMap::new()).is_err());
     }
+
+    #[test]
+    fn a_4_gb_laptop_gpu_with_the_desktop_on_it_gets_a_short_context() {
+        // RTX 3050 Ti Laptop: 1784 MiB free, 18.5 GB of RAM available
+        let catalog = catalog();
+        let clef = [catalog.model("clef").unwrap()];
+        let choices = plan(&clef, Accelerator::Cuda, 1784 - 256, 18551 - 2048, &HashMap::new()).unwrap();
+        assert_eq!(choices[0].profile.id, "cuda-2048-gpu0");
+    }
 }
