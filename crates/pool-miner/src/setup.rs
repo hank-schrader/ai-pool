@@ -226,10 +226,23 @@ pub async fn start(
             cuda_device: machine.cuda_device(),
         };
         let in_use = options.cache.hold_model(&model.weights).map_err(|error| error.to_string())?;
+        // a forced profile is kept as is; a planned one may step down if its probe fails
+        let profiles: Vec<_> = if options.overrides.contains_key(&model.id) {
+            vec![choice.profile.clone()]
+        } else {
+            let mut smaller: Vec<_> = model
+                .profiles_for(machine.accelerator)
+                .into_iter()
+                .filter(|profile| profile.context_tokens <= choice.profile.context_tokens)
+                .cloned()
+                .collect();
+            smaller.sort_by_key(|profile| std::cmp::Reverse(profile.context_tokens));
+            smaller
+        };
         let hosted = Arc::new(Hosted::new(
             model.clone(),
             catalog.model_revision(model),
-            choice.profile.clone(),
+            profiles,
             machine.device_id(),
             launch,
             counter,
