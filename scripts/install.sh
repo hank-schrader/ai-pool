@@ -4,20 +4,24 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/hank-schrader/ai-pool/main/scripts/install.sh | sh
 #   sh install.sh --version v0.1.0
+#   sh install.sh --no-modify-path     # leave shell startup files alone
 #
-# Installs into ${XDG_DATA_HOME:-~/.local/share}/ai-pool/<version> and links the
-# binaries into ~/.local/bin. Nothing is installed system-wide; GPU drivers are not touched.
+# Installs into ${XDG_DATA_HOME:-~/.local/share}/ai-pool/<version>, links the
+# binaries into ~/.local/bin and adds that to PATH in your shell's startup file.
+# Nothing is installed system-wide; GPU drivers are not touched.
 set -eu
 
 repo="hank-schrader/ai-pool"
 version="latest"
 data="${XDG_DATA_HOME:-$HOME/.local/share}/ai-pool"
 bin="$HOME/.local/bin"
+modify_path=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) version="$2"; shift 2 ;;
         --bin-dir) bin="$2"; shift 2 ;;
+        --no-modify-path) modify_path=0; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -54,5 +58,30 @@ for tool in pool-miner pool-server; do
 done
 
 echo "installed $version to $data/$version/$name"
-case ":$PATH:" in *":$bin:"*) ;; *) echo "add $bin to your PATH" ;; esac
-echo "next: pool-miner --pool http://<pool-host>:8080"
+
+# Persist $bin on PATH in the login shell's startup file, once.
+case ":$PATH:" in
+    *":$bin:"*) ;;
+    *)
+        if [ "$modify_path" = 1 ]; then
+            line="export PATH=\"$bin:\$PATH\""
+            case "$(basename "${SHELL:-sh}")" in
+                zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
+                bash) if [ "$(uname -s)" = Darwin ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi ;;
+                fish) rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/ai-pool.fish"; line="fish_add_path -g \"$bin\"" ;;
+                *) rc="$HOME/.profile" ;;
+            esac
+            if [ ! -f "$rc" ] || ! grep -qF "$line" "$rc"; then
+                mkdir -p "$(dirname "$rc")"
+                printf '\n# added by the ai-pool installer\n%s\n' "$line" >> "$rc"
+                echo "added $bin to PATH in $rc"
+            else
+                echo "$bin is already on PATH in $rc"
+            fi
+            echo "open a new terminal (or run: . $rc) to use pool-miner"
+        else
+            echo "add $bin to your PATH to use pool-miner"
+        fi
+        ;;
+esac
+echo "next: pool-miner --pool https://<pool-host>"
