@@ -29,3 +29,7 @@ Status: `curl -H "Authorization: Bearer <admin token>" https://ai.metalloobrabot
 To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
 
 Cloudflare's proxy (orange cloud) passes WebSockets and SSE through. Miners send a heartbeat every 10 s, which stays well inside Cloudflare's 100 s idle limit.
+
+## Current deployment
+
+`https://ai.metalloobrabotka.online` runs from `/root/ai-pool/deploy` on 23.94.101.213, which also hosts metalloobrabotka.online. On that host, HAProxy owns 80/443. It relays the hostnames in `/etc/haproxy/allowed-hosts.lst` and passes everything else, over the PROXY protocol, to the metalloobrabotka Traefik on `127.0.0.1:8080/8443`. So the pool needed no HAProxy or Traefik changes: just its Traefik labels on `metalloobrabotkaonline_default`. The server has 2 GB of RAM, so the image is built elsewhere and loaded with `docker save | ssh … docker load`. The secrets live only in `/root/ai-pool/deploy/.env` (mode 600).
