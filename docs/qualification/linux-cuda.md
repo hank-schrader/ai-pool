@@ -112,3 +112,7 @@ Short contexts with 0 GPU layers, for small or shared laptop GPUs: 2048 needs **
 The catalog publishes these as `cuda-<context>-gpu<layers>` profiles, with VRAM (`memory_mib`) and RAM (`host_memory_mib`) at the measured value plus about 10%. The miner uses them only when no full-GPU profile fits.
 
 End to end: with another process holding 9.3 GB of VRAM (5.4 GB free), a fresh `pool-miner --models clef` planned `cuda-8192-gpu0` (2,816 MiB VRAM + 11,008 MiB RAM). Its probe passed in 3.4 s. The README request returned billing 0.987 / angry 0.098 / urgency 1.67 (identical to full GPU) in 0.40 s, and a 7,741-token request took 2.4 s.
+
+### Laptop check: RTX 3050 Ti Laptop GPU (4 GB, desktop running on it)
+
+kachigar: CachyOS, 30 GB RAM, the dGPU shared with Hyprland, ghostty, Telegram, Steam and Zed (1,811 MiB free). The v0.1.3 release with `pool-miner --pool https://ai.metalloobrabotka.online --models clef --yes` and no token planned `cuda-2048-gpu0` (1,024 MiB VRAM + 10,496 MiB RAM), installed the runtime, passed its 2048-token probe in 5.7 s and connected anonymously. Through the public pool, the README request took 1.3–1.7 s (billing 0.987, angry 0.099, urgency 1.68), and a 1,941-token request took 3.8 s.
