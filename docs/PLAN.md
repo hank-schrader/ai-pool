@@ -1,6 +1,6 @@
 # ai-pool — architecture and implementation plan
 
-> **Status: decisions recorded (§12); implementation starts after the remaining questions there are answered.**
+> **Status: final. All decisions are recorded in §12.**
 > Drafted with an architecture planning agent, then fact-checked: the HF weight hashes and revisions, the pinned llama.cpp routes, and local hardware.
 
 The MVP serves **Clef decisions and GGUF chat models**, including OpenAI-compatible chat streaming. It uses one Rust pool server, Rust miners with outbound WebSocket connections, a JSON model catalog, and managed llama.cpp processes.
@@ -1085,9 +1085,9 @@ Recorded decisions:
 - Model catalog in JSON (`config/models.json`); server operational settings via env vars with a working `.env.example`.
 - Status API instead of a dashboard.
 
-No new user decision blocks implementation. Two optional product choices remain:
+- **Clef token counting: native count helper** (§4), built in CI from pinned llama.cpp and shipped with the miner on each platform.
+- **Chat API at launch: text chat + SSE subset** (§3). Tools, images, and `response_format` are rejected explicitly.
+- **Qualification order:** Linux + NVIDIA first, on the development machine (RTX 5070 Ti, 16 GiB). Once Linux passes, the user provides SSH access to an Apple Silicon Mac and a Windows + NVIDIA machine for Phase 0–3 qualification on those platforms.
+- One machine may host both models when they fit; otherwise use separate miners. No automatic model swapping in the MVP.
 
-| New question | Recommended default |
-|---|---|
-| Must an existing chat client work at launch, including tool calling or structured output? | Qualify text chat and SSE first. Name any required client before expanding the compatibility subset. |
-| Must one machine host both models simultaneously? | Allow separate miners, while documenting a combined-machine quickstart for hardware that fits both. Do not introduce automatic model swapping in the MVP. |
+No open questions remain.
