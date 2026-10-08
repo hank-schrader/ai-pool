@@ -313,6 +313,11 @@ impl Miner {
                         Ok(Ok(())) => None,
                     };
                     if let Some(error) = error {
+                        if error.code == JobErrorCode::RuntimeFailed
+                            && let Some(hosted) = miner.hosted(&model)
+                        {
+                            hosted.report_broken(&client);
+                        }
                         let _ = out
                             .send(MinerMessage::JobError {
                                 attempt_id: id.clone(),
@@ -357,18 +362,19 @@ impl Miner {
         if hosted.revision != revision {
             return Err((RejectReason::RevisionMismatch, format!("serving {}", hosted.revision)));
         }
-        if hosted.profile.id != profile {
-            return Err((RejectReason::ModelUnavailable, format!("serving profile {}", hosted.profile.id)));
-        }
-        if hosted.profile.context_tokens < required_context {
-            return Err((
-                RejectReason::ContextTooSmall,
-                format!("context {} < required {required_context}", hosted.profile.context_tokens),
-            ));
-        }
-        let Some(client) = hosted.client() else {
+        let Some(ready) = hosted.ready() else {
             return Err((RejectReason::ModelUnavailable, "runtime is restarting".into()));
         };
+        if ready.profile.id != profile {
+            return Err((RejectReason::ModelUnavailable, format!("serving profile {}", ready.profile.id)));
+        }
+        if ready.profile.context_tokens < required_context {
+            return Err((
+                RejectReason::ContextTooSmall,
+                format!("context {} < required {required_context}", ready.profile.context_tokens),
+            ));
+        }
+        let client = ready.client;
         let Ok(permit) = self.slot.clone().try_acquire_owned() else {
             return Err((RejectReason::Busy, "device slot is busy".into()));
         };

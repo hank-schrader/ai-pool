@@ -27,8 +27,9 @@ async fn exercise(running: &setup::Running) -> Result<(), String> {
     let mut failures = 0;
     for hosted in &running.models {
         let model = &hosted.model;
-        let client = hosted.client().ok_or("runtime not ready")?;
-        println!("== {} ({}, context {})", model.id, hosted.profile.id, hosted.profile.context_tokens);
+        let ready = hosted.ready().ok_or("runtime not ready")?;
+        let client = ready.client;
+        println!("== {} ({}, context {})", model.id, ready.profile.id, ready.profile.context_tokens);
         let (operation, body) = match model.backend {
             Backend::LlamaServerSystemone => (
                 Operation::Systemone,
