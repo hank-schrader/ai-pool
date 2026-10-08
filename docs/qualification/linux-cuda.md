@@ -71,3 +71,16 @@ cmake --build build/clef-token-count --target clef-token-count
 - Binary: 13.8 MB, needs only libc and libstdc++. Startup takes 0.22 s and peaks at 97 MiB RSS, without touching the GPU.
 - `scripts/qualify/compare_clef_counts.py` ran 18 cases against the pinned server (`data/clef-count-compare.txt`): **18/18 exact matches**. The cases cover string, object and array state; all three question types; unicode; marker text in the input; 16 questions; 64 options; inputs near 4k and 16k; over-limit input (matched against the count in the server's rejection); and invalid requests (same error text). Counting takes 0.2–25 ms per request.
 - The server accepts a one-option `choice`, so the pool must enforce its own 2-option minimum.
+
+## End-to-end: pool-server + pool-miner (2026-10-08)
+
+Release builds on this machine, local auth, using the commands from the README quickstart.
+
+- The miner detected the RTX 5070 Ti (14,404 MiB free, budget 14,148 MiB) and planned `clef` cuda-8192 (11,264 MiB) + `qwen2.5-1.5b-instruct` cuda-16384 (2,048 MiB). It installed `b11374` from `runtime/manifest.json` (both archives hash-verified, version check `commit b92761a51`) and had both models ready about 7 s after start, with cached weights.
+- Downloads: Qwen took 1 m 42 s for a full download. An interrupted download resumed at byte 18,535,380 and the result's SHA-256 matched. Importing Clef with `pool-miner download clef --import` hard-linked the file and verified it in 4.3 s.
+- `POST /v1/systemone` (README example): 200, `x-model-profile: cuda-8192`. Answers were route = billing (0.987), angry noul 0.098, urgency score 1.67, with 320 input tokens. In the miner selftest, preflight counts equalled the runtime's `usage` for Clef (226 = 226) and Qwen (35 = 35).
+- `POST /v1/chat/completions` streaming (README example): 43 SSE events with content, a usage chunk (`prompt_tokens` 37, `completion_tokens` 40), then `[DONE]`. Non-streaming chat: 200.
+- A 9,139-token Clef request with only cuda-8192 loaded got 503 `context_unavailable`.
+- A client disconnecting mid-stream freed the slot, and the next request was served. Three concurrent Clef requests were all served in order.
+- Killing the llama-server child set `ready_miners` to 0 until it restarted 5 s later; it then served again. After a pool restart, the miner reconnected with backoffs of 1.7 s, 2.7 s and 4.7 s on a new session.
+- On Ctrl-C the miner drained: an active stream finished (1,202 chunks + `[DONE]`), new requests got `no_miner_available`, and it exited with no llama-server or helper left. GPU memory went back to baseline.
