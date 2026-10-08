@@ -12,7 +12,7 @@ use pool_protocol::{
 };
 use pool_server::{
     AppState,
-    config::{AuthMode, Config},
+    config::{AuthMode, Config, MinerAuth},
     router,
 };
 use serde_json::{Value, json};
@@ -28,6 +28,8 @@ fn config() -> Config {
         auth_mode: AuthMode::Local,
         client_api_keys: vec![],
         miner_tokens: vec![],
+        miner_auth: MinerAuth::Token,
+        max_miners: 256,
         admin_token: None,
         request_timeout: Duration::from_secs(20),
         count_timeout: Duration::from_secs(5),
@@ -447,4 +449,34 @@ async fn fails_fast_when_no_other_miner_can_retry() {
     // well inside the 5 s queue timeout of the test config
     assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
     assert_eq!(jobs(&mut seen).len(), 1);
+}
+
+#[tokio::test]
+async fn open_pools_take_anonymous_miners_but_still_need_client_keys() {
+    let mut config = config();
+    config.auth_mode = AuthMode::Keys;
+    config.client_api_keys = vec!["client-secret".into()];
+    config.miner_auth = MinerAuth::Open;
+    let addr = start(config).await;
+
+    let (tx, _seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "anon", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/v1/systemone");
+    assert_eq!(client.post(&url).json(&clef_request(10)).send().await.unwrap().status(), 401);
+    let response = client.post(&url).bearer_auth("client-secret").json(&clef_request(10)).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn refuses_miners_beyond_the_connection_limit() {
+    let mut config = config();
+    config.max_miners = 1;
+    let addr = start(config).await;
+    let (tx, _seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "first", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
+    let mut request = format!("ws://{addr}/miner/v1/connect").into_client_request().unwrap();
+    request.headers_mut().insert("sec-websocket-protocol", SUBPROTOCOL.parse().unwrap());
+    let refused = tokio_tungstenite::connect_async(request).await.unwrap_err().to_string();
+    assert!(refused.contains("503"), "{refused}");
 }

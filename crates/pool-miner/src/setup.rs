@@ -91,7 +91,18 @@ pub fn runtime_target(
         format!("runtime {:?} has no {} build for {}", runtime.id, machine.accelerator, manifest::host_target())
     })?;
     if !target.qualified {
-        if !allow_unqualified {
+        let question = format!(
+            "The {} {} runtime has not been tested on real hardware yet. Use it anyway?",
+            target.target, target.accelerator
+        );
+        let allowed = allow_unqualified
+            || (ui::interactive()
+                && dialoguer::Confirm::new()
+                    .with_prompt(question)
+                    .default(true)
+                    .interact()
+                    .map_err(|e| e.to_string())?);
+        if !allowed {
             return Err(format!(
                 "the {} {} runtime has not been qualified yet; pass --allow-unqualified-runtime to try it",
                 target.target, target.accelerator
