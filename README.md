@@ -105,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/hank-schrader/ai-pool/main/scripts/
 irm https://raw.githubusercontent.com/hank-schrader/ai-pool/main/scripts/install.ps1 | iex      # Windows
 ```
 
-Releases are published by pushing a `v*` tag (see `.github/workflows/release.yml`).
+The installers add the binaries to your PATH (`~/.local/bin`, written to your shell's startup file; on Windows, the user PATH), so open a new terminal afterwards. Pass `--no-modify-path` to `install.sh` to skip that. Releases are published by pushing a `v*` tag (see `.github/workflows/release.yml`).
 
 ## API
 
