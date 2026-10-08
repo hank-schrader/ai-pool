@@ -3,3 +3,4 @@
 .env
 *.gguf
 *.gguf.part
+__pycache__/
