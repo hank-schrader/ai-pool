@@ -39,3 +39,7 @@ From a verbose llama-server load at 8192: `MTL0_Mapped model buffer size = 9199.
 - Qwen: `metal-16384 passed its 16384-token probe in 21.5s`. A streamed chat request returned a correct answer ending in `[DONE]`.
 
 Runtime status for macOS stays `qualified: false` until cancellation and crash recovery are also checked on the Mac. Metal memory figures in the catalog are still estimates. The probe now protects against wrong estimates, at the cost of one failed attempt (about 15 s) at startup.
+
+## Clef 8192 with other apps closed
+
+Chrome, ghostty and Tailscale (including its network extension) were quit, bringing memory in hard use to 4.0 GiB (wired 1.0, apps 2.3, compressed 0.7) with 88% free. metal-8192 **still failed its probe with the same `Compute error`**, and metal-4096 passed in 19.8 s. So the 8192 failure on a 16 GB M1 Pro is a hard limit of this hardware with runtime b11374, not pressure from other apps. On 16 GB Macs, Clef Q8_0 runs at 4096. Larger contexts need more unified memory, or a smaller quantization such as Clef Q4_K_M (not in the catalog yet).
