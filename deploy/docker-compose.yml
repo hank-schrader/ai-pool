@@ -1,0 +1,37 @@
+# Public pool server behind an existing Traefik (the metalloobrabotka setup):
+# Traefik terminates HTTPS with a Let's Encrypt certificate from its Cloudflare
+# DNS challenge and routes POOL_HOST to this container. Nothing is published
+# on the host; the pool is only reachable through Traefik.
+#
+#   cp .env.example .env   # set the secrets
+#   docker compose up -d --build
+name: ai-pool
+
+services:
+  pool:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      POOL_BIND: 0.0.0.0:8080
+      # public deployment: clients need API keys, miners need tokens
+      POOL_AUTH_MODE: keys
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK}"
+      - "traefik.http.routers.ai-pool.rule=Host(`${POOL_HOST}`)"
+      - "traefik.http.routers.ai-pool.entrypoints=web,websecure"
+      - "traefik.http.routers.ai-pool.tls=true"
+      - "traefik.http.routers.ai-pool.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-myresolver}"
+      - "traefik.http.services.ai-pool.loadbalancer.server.port=8080"
+
+networks:
+  proxy:
+    # the network the Traefik container is attached to
+    external: true
+    name: ${TRAEFIK_NETWORK}

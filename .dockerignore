@@ -1,0 +1,9 @@
+target
+build
+.git
+.env
+deploy/.env
+docs
+scripts
+native
+*.gguf
