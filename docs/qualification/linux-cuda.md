@@ -56,3 +56,18 @@ Chat behaviour verified at the pinned commit:
 ## Result
 
 Both models at their largest profiles total **≈ 13.8 GiB**, which fits one 16 GB card alongside the desktop. Catalog memory figures are the measured peak plus about 10% headroom, rounded up.
+
+## Clef token-count helper (`native/clef-token-count`)
+
+The helper is built CPU-only and statically from the pinned llama.cpp `server-context` library. It loads only the vocabulary (`vocab_only`) and runs the server's own `parse_questions → parse_state → fill_task_joint` path. Build:
+
+```sh
+cmake -S native/clef-token-count -B build/clef-token-count -DCMAKE_BUILD_TYPE=Release -G Ninja
+cmake --build build/clef-token-count --target clef-token-count
+```
+
+(`-DLLAMA_CPP_SOURCE_DIR=<checkout>` reuses an existing checkout at the pinned commit instead of fetching one.)
+
+- Binary: 13.8 MB, needs only libc and libstdc++. Startup takes 0.22 s and peaks at 97 MiB RSS, without touching the GPU.
+- `scripts/qualify/compare_clef_counts.py` ran 18 cases against the pinned server (`data/clef-count-compare.txt`): **18/18 exact matches**. The cases cover string, object and array state; all three question types; unicode; marker text in the input; 16 questions; 64 options; inputs near 4k and 16k; over-limit input (matched against the count in the server's rejection); and invalid requests (same error text). Counting takes 0.2–25 ms per request.
+- The server accepts a one-option `choice`, so the pool must enforce its own 2-option minimum.
