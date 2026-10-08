@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/pool-protocol"]
-default-members = ["crates/pool-protocol"]
+members = ["crates/pool-protocol", "crates/pool-server"]
+default-members = ["crates/pool-server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,3 +21,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 futures-util = "0.3"
 bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
+clap = { version = "4", features = ["derive", "env"] }
+tokio-util = "0.7"
