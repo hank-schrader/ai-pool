@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "default_models": [
+    "clef"
+  ],
+  "runtimes": [
+    {
+      "id": "llama-b11374",
+      "llama_cpp_commit": "b92761a515ea31e852e7fbc1fad5f874b46f3718"
+    }
+  ],
+  "models": [
+    {
+      "id": "clef",
+      "description": "Clef-Flash Q8_0 decision model. Answers choice, score and yes/no (noul) questions about text or JSON with probabilities, all questions read jointly. Use POST /v1/systemone.",
+      "backend": "llama-server-systemone",
+      "runtime": "llama-b11374",
+      "weights": {
+        "filename": "Clef-Flash-Q8_0.gguf",
+        "url": "https://huggingface.co/ggml-org/Clef-Flash-GGUF/resolve/4a7a08c09bc63baf043b62b5ba89dd67a0357d95/Clef-Flash-Q8_0.gguf",
+        "size_bytes": 9657260096,
+        "sha256": "8754b06f7d16d6d6ab63493b2ee385cc0ed6abde8c25c39298dc3e1eb05593d9"
+      },
+      "limits": {
+        "request_bytes": 1048576,
+        "max_questions": 16,
+        "max_choice_options": 64,
+        "max_score_levels": 10
+      },
+      "execution": {
+        "gpu_layers": 99
+      },
+      "profiles": [
+        {
+          "id": "cuda-4096",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 10496,
+          "memory_source": "measured"
+        },
+        {
+          "id": "cuda-8192",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 11264,
+          "memory_source": "measured"
+        },
+        {
+          "id": "cuda-16384",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 13312,
+          "memory_source": "measured"
+        },
+        {
+          "id": "metal-4096",
+          "accelerator": "metal",
+          "context_tokens": 4096,
+          "memory_mib": 10496,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "metal-8192",
+          "accelerator": "metal",
+          "context_tokens": 8192,
+          "memory_mib": 11264,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "metal-16384",
+          "accelerator": "metal",
+          "context_tokens": 16384,
+          "memory_mib": 13312,
+          "memory_source": "estimate"
+        }
+      ]
+    },
+    {
+      "id": "qwen2.5-1.5b-instruct",
+      "description": "Qwen2.5-1.5B-Instruct Q4_K_M (Apache-2.0). Small text chat model. Use POST /v1/chat/completions, streaming supported.",
+      "backend": "llama-server-chat",
+      "runtime": "llama-b11374",
+      "weights": {
+        "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "size_bytes": 1117320736,
+        "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
+      },
+      "limits": {
+        "request_bytes": 1048576,
+        "default_output_tokens": 512,
+        "max_output_tokens": 2048
+      },
+      "execution": {
+        "gpu_layers": 99,
+        "batch_tokens": 512,
+        "microbatch_tokens": 128
+      },
+      "profiles": [
+        {
+          "id": "cuda-4096",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 1536,
+          "memory_source": "measured"
+        },
+        {
+          "id": "cuda-8192",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 1792,
+          "memory_source": "measured"
+        },
+        {
+          "id": "cuda-16384",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 2048,
+          "memory_source": "measured"
+        },
+        {
+          "id": "metal-4096",
+          "accelerator": "metal",
+          "context_tokens": 4096,
+          "memory_mib": 1536,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "metal-8192",
+          "accelerator": "metal",
+          "context_tokens": 8192,
+          "memory_mib": 1792,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "metal-16384",
+          "accelerator": "metal",
+          "context_tokens": 16384,
+          "memory_mib": 2048,
+          "memory_source": "estimate"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+[package]
+name = "pool-protocol"
+description = "Shared ai-pool types: model catalog, miner wire protocol, request validation"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
