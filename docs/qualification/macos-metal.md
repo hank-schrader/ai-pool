@@ -26,10 +26,16 @@ Direct runtime checks (`scripts/qualify`):
 
 From a verbose llama-server load at 8192: `MTL0_Mapped model buffer size = 9199.41 MiB` and `MTL0 compute buffer size = 1714.47 MiB`, so **≈ 10,913 MiB**. `MTLDevice.recommendedMaxWorkingSetSize` on this Mac is **12,124 MiB**, so the out-of-memory failure at 8192 was not the working-set limit. It came from system memory pressure: macOS could not keep 10.9 GB resident for the GPU while other apps held the rest. At 4096 the compute buffer is about half as large, and it ran.
 
-## Findings to fix
+## Findings, fixed in v0.1.1
 
-1. **A static budget cannot predict whether a profile runs.** The miner allowed 70% of RAM (11,468 MiB) and picked metal-8192, which failed only once the first full-size request ran. The miner must probe each profile with a near-full-context request before advertising it, and step down to the next smaller profile when the probe fails.
-2. **After a Metal compute error, llama-server stays broken** ("backend is in error state … recreate the backend to recover"). The miner must restart the runtime after a compute error instead of continuing to advertise it.
-3. **The pool waited out the queue timeout** (15 s, `queue_timeout`, "no slot became free in time") when the only miner failed with a retryable error. With no other eligible miner, it should fail at once with the miner's error.
+1. **A static budget cannot predict whether a profile runs.** The 70% budget (11,468 MiB) let the plan pick metal-8192, which failed only on its first full-size request. **Fix:** the miner now probes every profile with a request filling about 85% of its context before advertising it. An automatically chosen profile that fails steps down to the next smaller one; a forced `--profile`/`--context` stays unavailable with a hint.
+2. **After a Metal compute error, llama-server stays broken.** **Fix:** a job that gets a runtime failure makes the supervisor restart that server, and the restarted server is probed again.
+3. **The pool waited out the 15 s queue timeout** when its only miner failed with a retryable error. **Fix:** with no other eligible miner, the client gets the miner's error at once (`502 miner_failed`). Regression test: `fails_fast_when_no_other_miner_can_retry`.
 
-Runtime status for macOS remains `qualified: false` until these are fixed and re-tested. The Metal memory figures in the catalog are still estimates; the only measured Metal value is Clef at 8192, ≈ 10,913 MiB.
+## Re-test with v0.1.1 (automatic plan, no overrides)
+
+- `install.sh` upgraded the Mac to the v0.1.1 release.
+- Clef: the plan chose metal-8192. Then `metal-8192 failed its startup probe (runtime HTTP 500: Compute error.); stepping down to metal-4096`, then `metal-4096 passed its 4096-token probe in 19.8s`, and it connected. README request through `https://ai.metalloobrabotka.online`: HTTP 200 in 1.8 s, `x-model-profile: metal-4096`, billing 0.987. A 5,000-token request got `503 context_unavailable` in 0.5 s.
+- Qwen: `metal-16384 passed its 16384-token probe in 21.5s`. A streamed chat request returned a correct answer ending in `[DONE]`.
+
+Runtime status for macOS stays `qualified: false` until cancellation and crash recovery are also checked on the Mac. Metal memory figures in the catalog are still estimates. The probe now protects against wrong estimates, at the cost of one failed attempt (about 15 s) at startup.
