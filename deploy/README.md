@@ -18,10 +18,11 @@ docker compose up -d --build     # or load a prebuilt image: docker save ai-pool
 curl https://ai.metalloobrabotka.online/readyz
 ```
 
-The server runs in `keys` mode: clients send `Authorization: Bearer <client key>`, and miners connect with:
+The server runs in `keys` mode: clients send `Authorization: Bearer <client key>`. Miners need a token from `POOL_MINER_TOKENS`, unless `POOL_MINER_AUTH=open` lets anyone connect:
 
 ```sh
-pool-miner --pool https://ai.metalloobrabotka.online --token <miner token>
+pool-miner --pool https://ai.metalloobrabotka.online                         # open pool
+pool-miner --pool https://ai.metalloobrabotka.online --token <miner token>   # token pool
 ```
 
 Status: `curl -H "Authorization: Bearer <admin token>" https://ai.metalloobrabotka.online/admin/v1/status`.
@@ -32,4 +33,4 @@ Cloudflare's proxy (orange cloud) passes WebSockets and SSE through. Miners send
 
 ## Current deployment
 
-`https://ai.metalloobrabotka.online` runs from `/root/ai-pool/deploy` on 23.94.101.213, which also hosts metalloobrabotka.online. On that host, HAProxy owns 80/443. It relays the hostnames in `/etc/haproxy/allowed-hosts.lst` and passes everything else, over the PROXY protocol, to the metalloobrabotka Traefik on `127.0.0.1:8080/8443`. So the pool needed no HAProxy or Traefik changes: just its Traefik labels on `metalloobrabotkaonline_default`. The server has 2 GB of RAM, so the image is built elsewhere and loaded with `docker save | ssh … docker load`. The secrets live only in `/root/ai-pool/deploy/.env` (mode 600).
+`https://ai.metalloobrabotka.online` runs from `/root/ai-pool/deploy` on 23.94.101.213, which also hosts metalloobrabotka.online. On that host, HAProxy owns 80/443. It relays the hostnames in `/etc/haproxy/allowed-hosts.lst` and passes everything else, over the PROXY protocol, to the metalloobrabotka Traefik on `127.0.0.1:8080/8443`. So the pool needed no HAProxy or Traefik changes: just its Traefik labels on `metalloobrabotkaonline_default`. The server has 2 GB of RAM, so the image is built elsewhere and loaded with `docker save | ssh … docker load`. The secrets live only in `/root/ai-pool/deploy/.env` (mode 600). Since 2026-10-08 it runs with `POOL_MINER_AUTH=open`: miners connect anonymously, while clients still need an API key.
