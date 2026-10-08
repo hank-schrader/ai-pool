@@ -1,0 +1,25 @@
+[package]
+name = "pool-runtime"
+description = "Miner-side runtime management: verified downloads, pinned llama-server processes, local inference clients"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pool-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+directories = "6"
+tar = "0.4"
+flate2 = "1"
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

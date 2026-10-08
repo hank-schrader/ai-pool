@@ -1,0 +1,23 @@
+[package]
+name = "pool-miner"
+description = "ai-pool miner: serves catalog models from this machine's GPU"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pool-protocol.workspace = true
+pool-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+clap.workspace = true
+dialoguer = { version = "0.12", default-features = false }
+indicatif = "0.18"

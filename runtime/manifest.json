@@ -1,0 +1,66 @@
+{
+  "manifest_version": 1,
+  "runtimes": [
+    {
+      "id": "llama-b11374",
+      "llama_cpp_commit": "b92761a515ea31e852e7fbc1fad5f874b46f3718",
+      "release_tag": "b11374",
+      "targets": [
+        {
+          "target": "x86_64-unknown-linux-gnu",
+          "accelerator": "cuda",
+          "qualified": true,
+          "server_binary": "llama-server",
+          "archives": [
+            {
+              "name": "llama-b11374-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11374/llama-b11374-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "size_bytes": 171513778,
+              "sha256": "bd3885b4997a25afc22e9d568fd646d223fec97ca0ccd1a65ab1d423edf624f9"
+            },
+            {
+              "name": "cudart-llama-b11374-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11374/cudart-llama-b11374-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "size_bytes": 594377951,
+              "sha256": "19446ae5d77290502096a7f1b9d71472d9fe8e6e90789d767af3ccef15862d35"
+            }
+          ]
+        },
+        {
+          "target": "x86_64-pc-windows-msvc",
+          "accelerator": "cuda",
+          "qualified": false,
+          "server_binary": "llama-server.exe",
+          "archives": [
+            {
+              "name": "llama-b11374-bin-win-cuda-13.4-x64.zip",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11374/llama-b11374-bin-win-cuda-13.4-x64.zip",
+              "size_bytes": 152990823,
+              "sha256": "b571aeff9b7337ce8ab9c5b61fda8051649758354f227fb87b28d98c70cfe57a"
+            },
+            {
+              "name": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11374/cudart-llama-bin-win-cuda-13.4-x64.zip",
+              "size_bytes": 423535356,
+              "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+            }
+          ]
+        },
+        {
+          "target": "aarch64-apple-darwin",
+          "accelerator": "metal",
+          "qualified": false,
+          "server_binary": "llama-server",
+          "archives": [
+            {
+              "name": "llama-b11374-bin-macos-arm64.tar.gz",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11374/llama-b11374-bin-macos-arm64.tar.gz",
+              "size_bytes": 11918888,
+              "sha256": "60e530c63000a1fdf792c4903f5398b9335ffde97b5ab19fa0e62cc15dd117c9"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -50,3 +50,11 @@ if (NOT TARGET server-context)
 endif()
 target_link_libraries(clef-token-count PRIVATE server-context)
 install(TARGETS clef-token-count RUNTIME DESTINATION bin)
+
+# Release binaries must run on machines without a matching C++ runtime.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT APPLE AND NOT WIN32)
+    target_link_options(clef-token-count PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+if (MSVC)
+    set_property(TARGET clef-token-count PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+endif()
