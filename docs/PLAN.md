@@ -2,8 +2,8 @@
 
 > **Status: draft.** Open decisions are listed in §12 and need answers before implementation starts.
 > This plan was drafted with an architecture planning agent after reading the Clef runtime in `refactor-tool/crates/cleff`.
-Recommended MVP: one Rust pool server, Rust miners connecting outbound over WebSocket, a JSON model catalog, and Clef inference through a managed, pinned `llama-server`. Start with trusted or approved miners, one concurrent inference per GPU, bounded queues, and no database or payments.
 
+Recommended MVP: one Rust pool server, Rust miners connecting outbound over WebSocket, a JSON model catalog, and Clef inference through a managed, pinned `llama-server`. Start with trusted or approved miners, one concurrent inference per GPU, bounded queues, and no database or payments.
 
 **1. Verified facts and implementation implications**
 
