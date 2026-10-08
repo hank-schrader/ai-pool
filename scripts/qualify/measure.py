@@ -4,7 +4,11 @@ profile, exercise it with a small and a near-limit request, and record peak
 accelerator memory.
 
 Usage:
-  measure.py --server <llama-server> --model <gguf> --kind clef|chat --ctx 4096 [--ctx 8192 ...]
+  measure.py --server <llama-server> --model <gguf> --kind clef|chat --ctx 4096 [--ctx 8192 ...] [--ngl 16]
+
+--ngl keeps only that many layers on the GPU and the rest in system RAM. Each
+result also reports the llama.cpp buffer sizes per device and the server's
+peak resident system memory.
 
 Prints one JSON line per profile. NVIDIA memory is sampled from nvidia-smi;
 on other platforms the peak fields are null and must be read from the OS.
@@ -13,6 +17,7 @@ on other platforms the peak fields are null and must be read from the OS.
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -38,10 +43,23 @@ def gpu_used_mib():
     return int(out.splitlines()[0])
 
 
+def rss_mib(pid):
+    try:
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        return None
+    return None
+
+
 class PeakSampler(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
         self.peak = None
+        self.rss_peak = None
+        self.pid = None
         self.stop = threading.Event()
 
     def run(self):
@@ -49,7 +67,23 @@ class PeakSampler(threading.Thread):
             used = gpu_used_mib()
             if used is not None and (self.peak is None or used > self.peak):
                 self.peak = used
+            rss = rss_mib(self.pid) if self.pid else None
+            if rss is not None and (self.rss_peak is None or rss > self.rss_peak):
+                self.rss_peak = rss
             time.sleep(0.1)
+
+
+def buffer_sizes(log_path):
+    """Sums llama.cpp's reported buffer sizes per buffer type (needs -v)."""
+    sizes = {}
+    try:
+        text = open(log_path, errors="replace").read()
+    except OSError:
+        return sizes
+    for kind, buffer, mib in re.findall(r"(load_tensors|sched_reserve|llama_kv_cache|llama_context):\s+(\S+) (?:model |compute |KV |output )?buffer size =\s+([\d.]+) MiB", text):
+        key = f"{buffer} {'model' if kind == 'load_tensors' else 'other'}"
+        sizes[key] = round(sizes.get(key, 0) + float(mib), 1)
+    return sizes
 
 
 def post(url, body, timeout=600):
@@ -131,9 +165,11 @@ def exercise(base, kind, ctx):
 def measure(args, ctx):
     port = free_port()
     command = [
-        args.server, "-m", args.model, "-ngl", "99", "-c", str(ctx),
+        args.server, "-m", args.model, "-ngl", str(args.ngl), "-c", str(ctx),
         "--host", "127.0.0.1", "--port", str(port), "--parallel", "1",
     ]
+    if args.log_dir:
+        command += ["-v"]
     if args.kind == "clef":
         command += ["-b", str(ctx), "-ub", str(ctx)]
     else:
@@ -141,11 +177,13 @@ def measure(args, ctx):
     baseline = gpu_used_mib()
     sampler = PeakSampler()
     sampler.start()
-    log = open(f"{args.log_dir}/{args.kind}-{ctx}.log", "w") if args.log_dir else subprocess.DEVNULL
+    log_path = f"{args.log_dir}/{args.kind}-{ctx}-ngl{args.ngl}.log" if args.log_dir else None
+    log = open(log_path, "w") if log_path else subprocess.DEVNULL
     child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+    sampler.pid = child.pid
     base = f"http://127.0.0.1:{port}"
     started = time.monotonic()
-    result = {"kind": args.kind, "model": os.path.basename(args.model), "ctx": ctx,
+    result = {"kind": args.kind, "model": os.path.basename(args.model), "ctx": ctx, "ngl": args.ngl,
               "args": command[3:], "baseline_mib": baseline}
     try:
         while True:
@@ -178,6 +216,9 @@ def measure(args, ctx):
         result["peak_mib"] = sampler.peak
         if sampler.peak is not None and baseline is not None:
             result["peak_delta_mib"] = sampler.peak - baseline
+        result["rss_peak_mib"] = sampler.rss_peak
+        if log_path:
+            result["buffers_mib"] = buffer_sizes(log_path)
     return result
 
 
@@ -187,6 +228,7 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--kind", choices=["clef", "chat"], required=True)
     parser.add_argument("--ctx", type=int, action="append", required=True)
+    parser.add_argument("--ngl", type=int, default=99, help="layers kept on the GPU")
     parser.add_argument("--log-dir")
     args = parser.parse_args()
     for ctx in args.ctx:

@@ -24,6 +24,9 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub catalog: Arc<Catalog>,
     pub catalog_revision: Arc<str>,
+    /// The catalog without offload profiles, for miners up to 0.1.2.
+    pub legacy_catalog: Arc<Catalog>,
+    pub legacy_catalog_revision: Arc<str>,
     pub auth: Arc<Auth>,
     pub scheduler: SchedulerHandle,
     /// Open miner connections, bounded by `Config::max_miners`.
@@ -33,9 +36,15 @@ pub struct AppState {
 impl AppState {
     /// Starts the scheduler task; call inside a Tokio runtime.
     pub fn new(config: Config, catalog: Catalog) -> Self {
+        let mut legacy = catalog.clone();
+        for model in &mut legacy.models {
+            model.profiles.retain(|profile| !profile.offloaded());
+        }
         let catalog = Arc::new(catalog);
         Self {
             catalog_revision: catalog.revision().into(),
+            legacy_catalog_revision: legacy.revision().into(),
+            legacy_catalog: Arc::new(legacy),
             auth: Arc::new(Auth::new(&config)),
             scheduler: scheduler::spawn(config.clone(), catalog.clone()),
             miner_connections: Arc::new(AtomicUsize::new(0)),

@@ -480,3 +480,26 @@ async fn refuses_miners_beyond_the_connection_limit() {
     let refused = tokio_tungstenite::connect_async(request).await.unwrap_err().to_string();
     assert!(refused.contains("503"), "{refused}");
 }
+
+#[tokio::test]
+async fn offload_profiles_are_only_sent_to_miners_that_ask() {
+    let addr = start(config()).await;
+    let count_offload = |reply: Value| {
+        reply["catalog"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|model| model["profiles"].as_array().unwrap().clone())
+            .filter(|profile| profile.get("gpu_layers").is_some())
+            .count()
+    };
+    let legacy: Value = reqwest::get(format!("http://{addr}/miner/v1/catalog")).await.unwrap().json().await.unwrap();
+    assert_eq!(count_offload(legacy.clone()), 0);
+    // the reduced view must still be a valid catalog for old miners, with its own revision
+    let parsed = Catalog::parse(&legacy["catalog"].to_string()).unwrap();
+    assert_eq!(parsed.revision(), legacy["catalog_revision"].as_str().unwrap());
+
+    let current: Value =
+        reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload")).await.unwrap().json().await.unwrap();
+    assert!(count_offload(current) > 0);
+}

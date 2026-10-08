@@ -1,11 +1,11 @@
 //! Client-facing HTTP API.
 
-use std::convert::Infallible;
+use std::{collections::HashMap, convert::Infallible};
 
 use axum::{
     Json,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{
         IntoResponse, Response,
@@ -85,9 +85,21 @@ pub async fn admin_status(State(state): State<AppState>, headers: HeaderMap) -> 
     Ok(Json(json!({ "catalog_revision": &*state.catalog_revision, "scheduler": snapshot })))
 }
 
-pub async fn miner_catalog(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>, ApiError> {
+/// Miners up to 0.1.2 reject unknown catalog fields, so offload profiles are
+/// only sent to miners that ask for them with `?features=offload`.
+pub async fn miner_catalog(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
     state.auth.miner(&headers)?;
-    Ok(Json(json!({ "catalog_revision": &*state.catalog_revision, "catalog": *state.catalog })))
+    let offload = query.get("features").is_some_and(|features| features.split(',').any(|f| f == "offload"));
+    let (catalog, revision) = if offload {
+        (&state.catalog, &state.catalog_revision)
+    } else {
+        (&state.legacy_catalog, &state.legacy_catalog_revision)
+    };
+    Ok(Json(json!({ "catalog_revision": &**revision, "catalog": **catalog })))
 }
 
 pub async fn systemone(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {

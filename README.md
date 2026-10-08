@@ -147,7 +147,11 @@ Errors are OpenAI-shaped, with `code`, `request_id` and `retryable`; see [docs/p
 ```
 
 A profile is one tested setting: these weights at this context need this much
-accelerator memory. Miners only run published profiles. They never stretch
+accelerator memory. **Offload profiles** (`cuda-<context>-gpu<layers>`, with
+`gpu_layers` and `host_memory_mib`) keep only some layers on an NVIDIA GPU and the
+rest in system RAM. Clef runs on GPUs with as little as about 2 GB of VRAM when
+there is about 11 GB of free RAM, at nearly full speed. The miner picks them only
+when nothing fits fully on the GPU. Miners only run published profiles. They never stretch
 context into spare memory. Pin weight URLs to a repository revision, not `main`;
 the sha256 is checked on every download. Restart the server after editing the
 catalog.

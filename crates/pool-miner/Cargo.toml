@@ -21,3 +21,4 @@ tokio-util.workspace = true
 clap.workspace = true
 dialoguer = { version = "0.12", default-features = false }
 indicatif = "0.18"
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
