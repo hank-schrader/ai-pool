@@ -94,6 +94,15 @@ Then on each miner machine:
 pool-miner --pool http://<pool-host>:8080 --token <miner token>
 ```
 
+To let **anyone** run a miner without a token, set `POOL_MINER_AUTH=open` (clients still need API keys). Then a new machine only needs:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hank-schrader/ai-pool/main/scripts/install.sh | sh   # then open a new terminal
+pool-miner --pool https://<pool-host>
+```
+
+The miner lists the pool's models with what fits this GPU, asks which to serve, confirms the download, then installs the runtime, downloads and verifies the weights, checks each model, and connects. Anonymous miners see the requests they serve and could return wrong answers, so open pools suit data you are fine sharing. `POOL_MAX_MINERS` (default 256) caps how many can connect.
+
 Clients send `Authorization: Bearer <client key>`. Put the pool behind a TLS reverse proxy (HTTPS/WSS) when it is reachable from outside your network. Miners see the requests they serve, so only approve miners you trust with that data.
 
 ## Installing a miner from a release

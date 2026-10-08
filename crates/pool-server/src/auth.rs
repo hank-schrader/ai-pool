@@ -7,12 +7,13 @@ use axum::http::{HeaderMap, header};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    config::{AuthMode, Config},
+    config::{AuthMode, Config, MinerAuth},
     error::ApiError,
 };
 
 pub struct Auth {
     mode: AuthMode,
+    miner_auth: MinerAuth,
     clients: HashMap<[u8; 32], String>,
     miners: HashMap<[u8; 32], String>,
     admin: Option<[u8; 32]>,
@@ -25,6 +26,7 @@ impl Auth {
         };
         Self {
             mode: config.auth_mode,
+            miner_auth: config.miner_auth,
             clients: labeled(&config.client_api_keys, "client"),
             miners: labeled(&config.miner_tokens, "miner"),
             admin: config.admin_token.as_deref().map(digest),
@@ -46,11 +48,12 @@ impl Auth {
     }
 
     pub fn miner(&self, headers: &HeaderMap) -> Result<String, ApiError> {
-        match self.mode {
-            AuthMode::Local => Ok("local-miner".into()),
-            AuthMode::Keys => bearer(headers)
-                .and_then(|key| self.miners.get(&digest(key)).cloned())
-                .ok_or_else(ApiError::unauthorized),
+        let known = bearer(headers).and_then(|key| self.miners.get(&digest(key)).cloned());
+        match (self.mode, self.miner_auth) {
+            (AuthMode::Local, _) => Ok("local-miner".into()),
+            (AuthMode::Keys, MinerAuth::Token) => known.ok_or_else(ApiError::unauthorized),
+            // open pools take any miner; a valid token still gives it a name
+            (AuthMode::Keys, MinerAuth::Open) => Ok(known.unwrap_or_else(|| "anonymous".into())),
         }
     }
 

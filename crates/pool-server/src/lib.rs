@@ -7,7 +7,7 @@ pub mod error;
 pub mod miners;
 pub mod scheduler;
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicUsize};
 
 use axum::{
     Router,
@@ -26,6 +26,8 @@ pub struct AppState {
     pub catalog_revision: Arc<str>,
     pub auth: Arc<Auth>,
     pub scheduler: SchedulerHandle,
+    /// Open miner connections, bounded by `Config::max_miners`.
+    pub miner_connections: Arc<AtomicUsize>,
 }
 
 impl AppState {
@@ -36,6 +38,7 @@ impl AppState {
             catalog_revision: catalog.revision().into(),
             auth: Arc::new(Auth::new(&config)),
             scheduler: scheduler::spawn(config.clone(), catalog.clone()),
+            miner_connections: Arc::new(AtomicUsize::new(0)),
             catalog,
             config: Arc::new(config),
         }

@@ -2,7 +2,13 @@
 //! reader that forwards messages to the scheduler and a writer that drains the
 //! scheduler's outbound queue and keeps the connection alive with pings.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::{
     extract::{
@@ -28,11 +34,35 @@ pub async fn connect(
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     let label = state.auth.miner(&headers)?;
+    let slot = ConnectionSlot::take(&state.miner_connections, state.config.max_miners).ok_or_else(|| {
+        ApiError::overloaded(format!("the pool accepts at most {} miner connections", state.config.max_miners))
+    })?;
     Ok(upgrade
         .protocols([SUBPROTOCOL])
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| serve(state, label, socket)))
+        .on_upgrade(move |socket| async move {
+            serve(state, label, socket).await;
+            drop(slot);
+        }))
+}
+
+/// One counted miner connection; released when dropped.
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl ConnectionSlot {
+    fn take(counter: &Arc<AtomicUsize>, max: usize) -> Option<Self> {
+        counter
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |open| (open < max).then_some(open + 1))
+            .ok()
+            .map(|_| Self(counter.clone()))
+    }
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 async fn serve(state: AppState, label: String, socket: WebSocket) {
