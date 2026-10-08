@@ -791,7 +791,7 @@ Each estimate describes **one resident model process at the specified context, b
 
 Clef’s weights are approximately 8.99 GiB. Its non-causal execution makes scratch memory and context growth particularly important. The 14/20/32 GiB CUDA and 14/22/36 GiB Metal figures are planning estimates, not measured hardware guarantees.
 
-These estimates are probably too high. refactor-tool’s default Clef context is 16384, with context, batch and microbatch all set to it, and its `.env` doesn’t override that on the development machine, an RTX 5070 Ti with 16 GiB. If that configuration serves requests, the 16384 profile fits in under 16 GiB, not 32. Phase 0 measures peak VRAM for every Clef profile on that GPU and replaces these numbers.
+**Measured on Linux CUDA (RTX 5070 Ti, see `docs/qualification/linux-cuda.md`):** Clef peaks at 9,324 / 10,184 / 12,096 MiB and Qwen at 1,334 / 1,446 / 1,672 MiB for 4096 / 8192 / 16384. The shipped catalog uses these numbers plus about 10% headroom instead of the estimates above. Metal numbers remain estimates until the Mac is qualified.
 
 The chat weights are approximately 1.04 GiB. The profile estimates add cache and runtime space. A modest GPU can serve chat independently even if Clef does not fit.
 
@@ -1084,7 +1084,6 @@ Recorded decisions:
 - Native quickstart first; Docker later.
 - Model catalog in JSON (`config/models.json`); server operational settings via env vars with a working `.env.example`.
 - Status API instead of a dashboard.
-
 - **Clef token counting: native count helper** (§4), built in CI from pinned llama.cpp and shipped with the miner on each platform.
 - **Chat API at launch: text chat + SSE subset** (§3). Tools, images, and `response_format` are rejected explicitly.
 - **Qualification order:** Linux + NVIDIA first, on the development machine (RTX 5070 Ti, 16 GiB). Once Linux passes, the user provides SSH access to an Apple Silicon Mac and a Windows + NVIDIA machine for Phase 0–3 qualification on those platforms.
