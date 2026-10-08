@@ -9,6 +9,9 @@ name: ai-pool
 
 services:
   pool:
+    # small servers can load a prebuilt image instead of compiling:
+    #   docker save ai-pool-server:latest | ssh host docker load
+    image: ai-pool-server:latest
     build:
       context: ..
       dockerfile: Dockerfile
