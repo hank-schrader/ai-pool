@@ -180,6 +180,24 @@
           "memory_source": "measured",
           "gpu_layers": 0,
           "host_memory_mib": 12544
+        },
+        {
+          "id": "cuda-1024-gpu0",
+          "accelerator": "cuda",
+          "context_tokens": 1024,
+          "memory_mib": 768,
+          "memory_source": "measured",
+          "gpu_layers": 0,
+          "host_memory_mib": 10240
+        },
+        {
+          "id": "cuda-2048-gpu0",
+          "accelerator": "cuda",
+          "context_tokens": 2048,
+          "memory_mib": 1024,
+          "memory_source": "measured",
+          "gpu_layers": 0,
+          "host_memory_mib": 10496
         }
       ]
     },

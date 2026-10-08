@@ -107,6 +107,8 @@ Release builds on this machine, local auth, using the commands from the README q
 | 8 | 16384 | 7,308 MiB | 9,716 MiB | 0.409 s | 15892 tok, 4.343 s |
 | 0 | 16384 | 4,698 MiB | 11,248 MiB | 0.465 s | 15892 tok, 4.367 s |
 
+Short contexts with 0 GPU layers, for small or shared laptop GPUs: 2048 needs **870 MiB** of VRAM (near-limit 1,986 tokens in 0.69 s) and 1024 needs **612 MiB** (993 tokens in 0.52 s), each with about 9.3 GB of RAM. These were added after an RTX 3050 Ti Laptop GPU (4 GB, with the desktop on it) had only 1,784 MiB free, too little for `cuda-4096-gpu0`.
+
 The catalog publishes these as `cuda-<context>-gpu<layers>` profiles, with VRAM (`memory_mib`) and RAM (`host_memory_mib`) at the measured value plus about 10%. The miner uses them only when no full-GPU profile fits.
 
 End to end: with another process holding 9.3 GB of VRAM (5.4 GB free), a fresh `pool-miner --models clef` planned `cuda-8192-gpu0` (2,816 MiB VRAM + 11,008 MiB RAM). Its probe passed in 3.4 s. The README request returned billing 0.987 / angry 0.098 / urgency 1.67 (identical to full GPU) in 0.40 s, and a 7,741-token request took 2.4 s.
