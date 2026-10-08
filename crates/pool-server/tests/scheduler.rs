@@ -61,6 +61,8 @@ enum Behavior {
     Stream { chunks: u64, then_drop: bool },
     /// Stream one chunk, then wait (for cancellation tests).
     StreamAndHang,
+    /// Fail every job the way a broken runtime does.
+    FailRuntime,
 }
 
 #[derive(Debug)]
@@ -148,6 +150,11 @@ async fn fake_miner(
                     sink.send(send(MinerMessage::Accepted { attempt_id: attempt_id.clone() })).await.unwrap();
                     match behavior {
                         Behavior::DropAfterAccept => return,
+                        Behavior::FailRuntime => {
+                            let message = "runtime returned HTTP 500: Compute error.".to_string();
+                            let code = pool_protocol::messages::JobErrorCode::RuntimeFailed;
+                            sink.send(send(MinerMessage::JobError { attempt_id, code, message })).await.unwrap();
+                        }
                         Behavior::Answer => {
                             let body = match operation {
                                 pool_protocol::Operation::Systemone => json!({
@@ -422,4 +429,22 @@ async fn keys_mode_requires_credentials() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn fails_fast_when_no_other_miner_can_retry() {
+    let addr = start(config()).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "broken", None, &[("clef", "cuda-8192")], Behavior::FailRuntime, tx).await;
+    wait_ready(addr, "clef", 1).await;
+
+    let started = std::time::Instant::now();
+    let response = post(addr, "/v1/systemone", &clef_request(100)).await;
+    assert_eq!(response.status(), 502);
+    let error = response.json::<Value>().await.unwrap()["error"].clone();
+    assert_eq!(error["code"], "miner_failed");
+    assert!(error["message"].as_str().unwrap().contains("Compute error"), "{error}");
+    // well inside the 5 s queue timeout of the test config
+    assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+    assert_eq!(jobs(&mut seen).len(), 1);
 }

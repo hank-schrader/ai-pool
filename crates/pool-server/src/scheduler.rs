@@ -700,9 +700,28 @@ impl Scheduler {
         }
     }
 
+    /// Whether a failed attempt may run again: nothing was committed, the retry
+    /// is unused, time remains, and some other miner could take the job.
+    /// Without another miner the client gets the real error now instead of
+    /// waiting out the queue timeout.
+    fn can_retry(&self, job_id: &str, failed_session: &str) -> bool {
+        let job = &self.jobs[job_id];
+        !job.committed
+            && job.attempts <= MAX_RETRIES
+            && Instant::now() < job.deadline
+            && self.miners.iter().any(|(session, miner)| {
+                session != failed_session
+                    && !job.excluded.contains(session)
+                    && !miner.draining
+                    && miner
+                        .serves(&job.new.model, &job.new.model_revision)
+                        .any(|loaded| loaded.context_tokens >= job.new.required_context)
+            })
+    }
+
     fn on_job_error(&mut self, job_id: &str, session: &str, code: JobErrorCode, message: String) {
+        let retry = code.retryable() && self.can_retry(job_id, session);
         let job = self.jobs.get_mut(job_id).expect("released job exists");
-        let retry = code.retryable() && !job.committed && job.attempts <= MAX_RETRIES && Instant::now() < job.deadline;
         if retry {
             job.excluded.insert(session.into());
             job.state = JobState::Queued;
@@ -723,10 +742,15 @@ impl Scheduler {
         job.rejections += 1;
         // the dispatch never ran, so it does not use up the retry
         job.attempts = job.attempts.saturating_sub(1);
-        if job.rejections > MAX_REJECTIONS {
-            self.fail(job_id, ApiError::miner_failed(format!("miners kept rejecting the job ({reason:?})")));
+        let rejections = job.rejections;
+        if rejections > MAX_REJECTIONS || !self.can_retry(job_id, session) {
+            self.fail(
+                job_id,
+                ApiError::miner_failed(format!("no miner could take the job (last rejection: {reason:?})")),
+            );
             return;
         }
+        let job = self.jobs.get_mut(job_id).expect("released job exists");
         job.excluded.insert(session.into());
         job.state = JobState::Queued;
         self.queue.push_front(job_id.into());
@@ -782,7 +806,8 @@ impl Scheduler {
             if !matches!(&job.state, JobState::Dispatched { attempt, .. } if *attempt == attempt_id) {
                 continue;
             }
-            if !job.committed && job.attempts <= MAX_RETRIES && Instant::now() < job.deadline {
+            if self.can_retry(&job_id, session) {
+                let job = self.jobs.get_mut(&job_id).expect("checked above");
                 job.excluded.insert(session.into());
                 job.state = JobState::Queued;
                 self.queue.push_front(job_id);
