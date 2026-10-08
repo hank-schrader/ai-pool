@@ -138,6 +138,9 @@ impl Hosted {
                 let profile = hosted.profiles[level].clone();
                 let mut launch = hosted.launch.clone();
                 launch.context_tokens = profile.context_tokens;
+                if let Some(layers) = profile.gpu_layers {
+                    launch.gpu_layers = layers;
+                }
                 let started = Instant::now();
                 let server = tokio::select! {
                     server = LlamaServer::start(&launch) => server,

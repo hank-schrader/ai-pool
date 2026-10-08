@@ -115,18 +115,27 @@ pub fn runtime_target(
 
 pub fn print_plan(choices: &[Choice]) {
     let total: u64 = choices.iter().map(|choice| choice.profile.memory_mib).sum();
+    let host: u64 = choices.iter().filter_map(|choice| choice.profile.host_memory_mib).sum();
     eprintln!("Profile plan:");
     for choice in choices {
         let source = match choice.profile.memory_source {
             pool_protocol::catalog::MemorySource::Measured => "measured",
             pool_protocol::catalog::MemorySource::Estimate => "estimate",
         };
+        let offload = match (choice.profile.gpu_layers, choice.profile.host_memory_mib) {
+            (Some(layers), Some(ram)) => format!(" + {ram} MiB RAM, {layers} layers on the GPU"),
+            _ => String::new(),
+        };
         eprintln!(
-            "  {:<24} {:<12} context {:>6}  {:>6} MiB ({source})",
+            "  {:<24} {:<18} context {:>6}  {:>6} MiB ({source}){offload}",
             choice.model.id, choice.profile.id, choice.profile.context_tokens, choice.profile.memory_mib
         );
     }
-    eprintln!("  total {total} MiB");
+    if host > 0 {
+        eprintln!("  total {total} MiB accelerator memory + {host} MiB system RAM");
+    } else {
+        eprintln!("  total {total} MiB");
+    }
 }
 
 /// Fetches weights unless cached, after consent for large downloads.
@@ -194,7 +203,8 @@ pub async fn start(
     machine: &Machine,
     options: &Options,
 ) -> Result<Running, String> {
-    let choices = plan::plan(selected, machine.accelerator, machine.budget_mib, &options.overrides)?;
+    let choices =
+        plan::plan(selected, machine.accelerator, machine.budget_mib, machine.ram_budget_mib, &options.overrides)?;
     print_plan(&choices);
     confirm_downloads(&options.cache, selected, options.yes)?;
 
@@ -237,18 +247,25 @@ pub async fn start(
             cuda_device: machine.cuda_device(),
         };
         let in_use = options.cache.hold_model(&model.weights).map_err(|error| error.to_string())?;
-        // a forced profile is kept as is; a planned one may step down if its probe fails
+        // a forced profile is kept as is; a planned one may step down to profiles
+        // that need less accelerator memory (and fit RAM) if its probe fails
         let profiles: Vec<_> = if options.overrides.contains_key(&model.id) {
             vec![choice.profile.clone()]
         } else {
-            let mut smaller: Vec<_> = model
+            let mut fallback: Vec<_> = model
                 .profiles_for(machine.accelerator)
                 .into_iter()
-                .filter(|profile| profile.context_tokens <= choice.profile.context_tokens)
+                .filter(|profile| {
+                    profile.id == choice.profile.id
+                        || (profile.memory_mib < choice.profile.memory_mib
+                            && profile.host_memory_mib.unwrap_or(0) <= machine.ram_budget_mib)
+                })
                 .cloned()
                 .collect();
-            smaller.sort_by_key(|profile| std::cmp::Reverse(profile.context_tokens));
-            smaller
+            fallback.sort_by_key(|profile| std::cmp::Reverse(profile.preference()));
+            // the planned profile first, even if a fallback ranks higher
+            fallback.sort_by_key(|profile| profile.id != choice.profile.id);
+            fallback
         };
         let hosted = Arc::new(Hosted::new(
             model.clone(),

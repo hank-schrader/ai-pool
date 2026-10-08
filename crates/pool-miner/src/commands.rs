@@ -12,12 +12,22 @@ use crate::{
     ui::{self, Reporter},
 };
 
+fn profile_fits(profile: &pool_protocol::Profile, machine: &Machine) -> bool {
+    profile.memory_mib <= machine.budget_mib && profile.host_memory_mib.unwrap_or(0) <= machine.ram_budget_mib
+}
+
 fn fits(model: &Model, machine: &Machine) -> String {
     let profiles = model.profiles_for(machine.accelerator);
     if profiles.is_empty() {
         return format!("no {} profile", machine.accelerator);
     }
-    match profiles.iter().rev().find(|profile| profile.memory_mib <= machine.budget_mib) {
+    match profiles.iter().rev().find(|profile| profile_fits(profile, machine)) {
+        Some(best) if best.offloaded() => format!(
+            "fits {} ({} MiB + {} MiB RAM, offloaded)",
+            best.id,
+            best.memory_mib,
+            best.host_memory_mib.unwrap_or(0)
+        ),
         Some(best) => format!("fits up to {} ({} MiB)", best.id, best.memory_mib),
         None => format!("does not fit (needs {} MiB)", profiles[0].memory_mib),
     }
@@ -64,13 +74,18 @@ pub async fn list_models(cli: &Cli) -> Result<(), String> {
         for profile in &model.profiles {
             let mark = match &machine {
                 Ok(machine) if machine.accelerator == profile.accelerator => {
-                    if profile.memory_mib <= machine.budget_mib { "fits" } else { "too large" }
+                    if profile_fits(profile, machine) {
+                        "fits"
+                    } else {
+                        "too large"
+                    }
                 }
                 Ok(_) => "other accelerator",
                 Err(_) => "",
             };
+            let ram = profile.host_memory_mib.map(|ram| format!(" + {ram} MiB RAM")).unwrap_or_default();
             println!(
-                "    {:<12} context {:>6}  {:>6} MiB ({:?})  {mark}",
+                "    {:<18} context {:>6}  {:>6} MiB{ram} ({:?})  {mark}",
                 profile.id, profile.context_tokens, profile.memory_mib, profile.memory_source
             );
         }

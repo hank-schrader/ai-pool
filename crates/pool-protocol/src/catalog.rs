@@ -173,6 +173,25 @@ pub struct Profile {
     /// dedicated VRAM for CUDA, unified memory for Metal.
     pub memory_mib: u64,
     pub memory_source: MemorySource,
+    /// Offload profiles only: layers kept on the GPU; the rest of the weights
+    /// stay in system RAM. Unset means every layer is on the GPU.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_layers: Option<u32>,
+    /// Offload profiles only: system RAM the weights left on the host need.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_memory_mib: Option<u64>,
+}
+
+impl Profile {
+    pub fn offloaded(&self) -> bool {
+        self.gpu_layers.is_some()
+    }
+
+    /// Ordering of preference, best last: everything on the GPU beats any
+    /// offload, then more context, then more layers on the GPU.
+    pub fn preference(&self) -> (bool, u32, u32) {
+        (!self.offloaded(), self.context_tokens, self.gpu_layers.unwrap_or(u32::MAX))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -308,10 +327,10 @@ impl Model {
         self.profiles.iter().find(|profile| profile.id == id)
     }
 
-    /// Profiles for one accelerator, smallest context first.
+    /// Profiles for one accelerator, least preferred first (see [`Profile::preference`]).
     pub fn profiles_for(&self, accelerator: Accelerator) -> Vec<&Profile> {
         let mut profiles: Vec<_> = self.profiles.iter().filter(|p| p.accelerator == accelerator).collect();
-        profiles.sort_by_key(|profile| profile.context_tokens);
+        profiles.sort_by_key(|profile| profile.preference());
         profiles
     }
 
@@ -386,11 +405,23 @@ impl Model {
             if profile.memory_mib == 0 {
                 problems.push(format!("{at}: profile {:?}: memory_mib must be positive", profile.id));
             }
+            match (profile.gpu_layers, profile.host_memory_mib) {
+                (None, None) => {}
+                (Some(_), Some(host)) if host > 0 && profile.accelerator == Accelerator::Cuda => {}
+                (Some(_), Some(_)) if profile.accelerator != Accelerator::Cuda => problems.push(format!(
+                    "{at}: profile {:?}: offloading to system RAM is only supported on cuda",
+                    profile.id
+                )),
+                _ => problems.push(format!(
+                    "{at}: profile {:?}: offload profiles need both gpu_layers and a positive host_memory_mib",
+                    profile.id
+                )),
+            }
         }
         for accelerator in [Accelerator::Cuda, Accelerator::Metal] {
-            let contexts: Vec<_> = self.profiles_for(accelerator).iter().map(|p| p.context_tokens).collect();
-            if contexts.windows(2).any(|pair| pair[0] == pair[1]) {
-                problems.push(format!("{at}: two {accelerator} profiles have the same context"));
+            let keys: Vec<_> = self.profiles_for(accelerator).iter().map(|p| p.preference()).collect();
+            if keys.windows(2).any(|pair| pair[0] == pair[1]) {
+                problems.push(format!("{at}: two {accelerator} profiles have the same context and GPU layers"));
             }
         }
     }
@@ -435,6 +466,24 @@ mod tests {
 
         value["models"][0]["surprise"] = true.into();
         assert!(matches!(Catalog::parse(&value.to_string()), Err(CatalogError::Json(_))));
+    }
+
+    #[test]
+    fn offload_profiles_need_layers_and_host_memory_on_cuda() {
+        let mut value: serde_json::Value = serde_json::from_str(SHIPPED).unwrap();
+        let profiles = value["models"][0]["profiles"].as_array_mut().unwrap();
+        let mut offload = profiles[0].clone();
+        offload["id"] = "cuda-4096-gpu3".into();
+        offload["gpu_layers"] = 3.into();
+        profiles.push(offload.clone());
+        let error = Catalog::parse(&value.to_string()).unwrap_err().to_string();
+        assert!(error.contains("host_memory_mib"), "{error}");
+
+        let profiles = value["models"][0]["profiles"].as_array_mut().unwrap();
+        profiles.last_mut().unwrap()["host_memory_mib"] = 7000.into();
+        let catalog = Catalog::parse(&value.to_string()).unwrap();
+        let ranked = catalog.models[0].profiles_for(Accelerator::Cuda);
+        assert!(ranked.first().unwrap().offloaded(), "offload ranks below every full-GPU profile");
     }
 
     #[test]

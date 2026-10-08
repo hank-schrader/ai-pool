@@ -56,7 +56,8 @@ impl Pool {
     /// miner computes, or the two disagree about the catalog's meaning.
     pub async fn catalog(&self) -> Result<(Catalog, String), String> {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
-        let mut request = http.get(format!("{}/miner/v1/catalog", self.base));
+        // offload profiles are only sent to miners that understand them
+        let mut request = http.get(format!("{}/miner/v1/catalog?features=offload", self.base));
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }

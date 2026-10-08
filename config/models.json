@@ -72,6 +72,114 @@
           "context_tokens": 16384,
           "memory_mib": 13312,
           "memory_source": "estimate"
+        },
+        {
+          "id": "cuda-4096-gpu24",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 8448,
+          "memory_source": "measured",
+          "gpu_layers": 24,
+          "host_memory_mib": 5120
+        },
+        {
+          "id": "cuda-4096-gpu16",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 6400,
+          "memory_source": "measured",
+          "gpu_layers": 16,
+          "host_memory_mib": 6912
+        },
+        {
+          "id": "cuda-4096-gpu8",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 4608,
+          "memory_source": "measured",
+          "gpu_layers": 8,
+          "host_memory_mib": 8960
+        },
+        {
+          "id": "cuda-4096-gpu0",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 1792,
+          "memory_source": "measured",
+          "gpu_layers": 0,
+          "host_memory_mib": 10496
+        },
+        {
+          "id": "cuda-8192-gpu24",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 9472,
+          "memory_source": "measured",
+          "gpu_layers": 24,
+          "host_memory_mib": 5632
+        },
+        {
+          "id": "cuda-8192-gpu16",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 7680,
+          "memory_source": "measured",
+          "gpu_layers": 16,
+          "host_memory_mib": 7424
+        },
+        {
+          "id": "cuda-8192-gpu8",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 5632,
+          "memory_source": "measured",
+          "gpu_layers": 8,
+          "host_memory_mib": 9472
+        },
+        {
+          "id": "cuda-8192-gpu0",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 2816,
+          "memory_source": "measured",
+          "gpu_layers": 0,
+          "host_memory_mib": 11008
+        },
+        {
+          "id": "cuda-16384-gpu24",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 12032,
+          "memory_source": "measured",
+          "gpu_layers": 24,
+          "host_memory_mib": 6912
+        },
+        {
+          "id": "cuda-16384-gpu16",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 9984,
+          "memory_source": "measured",
+          "gpu_layers": 16,
+          "host_memory_mib": 8960
+        },
+        {
+          "id": "cuda-16384-gpu8",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 8192,
+          "memory_source": "measured",
+          "gpu_layers": 8,
+          "host_memory_mib": 10752
+        },
+        {
+          "id": "cuda-16384-gpu0",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 5376,
+          "memory_source": "measured",
+          "gpu_layers": 0,
+          "host_memory_mib": 12544
         }
       ]
     },

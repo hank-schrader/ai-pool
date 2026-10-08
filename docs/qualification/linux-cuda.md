@@ -84,3 +84,29 @@ Release builds on this machine, local auth, using the commands from the README q
 - A client disconnecting mid-stream freed the slot, and the next request was served. Three concurrent Clef requests were all served in order.
 - Killing the llama-server child set `ready_miners` to 0 until it restarted 5 s later; it then served again. After a pool restart, the miner reconnected with backoffs of 1.7 s, 2.7 s and 4.7 s on a new session.
 - On Ctrl-C the miner drained: an active stream finished (1,202 chunks + `[DONE]`), new requests got `no_miner_available`, and it exited with no llama-server or helper left. GPU memory went back to baseline.
+
+## Clef with weights offloaded to system RAM (2026-10-08)
+
+`scripts/qualify/measure.py --ngl N` keeps N of Clef's 33 offloadable layers on the GPU and the rest in system RAM. RAM is the sum of llama.cpp's host buffers (`CPU_Mapped` weights and `CUDA_Host` buffers). Clef reads each request in one batch, and by default (`--op-offload`) llama.cpp streams the RAM-resident weights over PCIe to the GPU for large batches, so offloading costs little time on this PCIe 5.0 x16 card. Slower links (PCIe 3.0, x4/x8 slots, laptops) will add more per request.
+
+| GPU layers | Context | VRAM peak | Host RAM | Small request | Near-limit request |
+|---:|---:|---:|---:|---:|---|
+| 33 (all) | 4096 | 9,324 MiB | — | ~0.16 s | 0.73 s |
+| 24 | 4096 | 7,510 MiB | 4,480 MiB | 0.255 s | 3973 tok, 0.834 s |
+| 16 | 4096 | 5,768 MiB | 6,234 MiB | 0.339 s | 3973 tok, 0.906 s |
+| 8 | 4096 | 4,024 MiB | 7,987 MiB | 0.44 s | 3973 tok, 0.99 s |
+| 0 | 4096 | 1,428 MiB | 9,520 MiB | 0.479 s | 3973 tok, 1.07 s |
+| 33 (all) | 8192 | 10,184 MiB | — | ~0.16 s | 1.63 s |
+| 24 | 8192 | 8,530 MiB | 4,928 MiB | 0.256 s | 7946 tok, 1.72 s |
+| 16 | 8192 | 6,788 MiB | 6,682 MiB | 0.327 s | 7946 tok, 1.873 s |
+| 8 | 8192 | 5,044 MiB | 8,436 MiB | 0.412 s | 7946 tok, 1.998 s |
+| 0 | 8192 | 2,448 MiB | 9,968 MiB | 0.466 s | 7946 tok, 1.992 s |
+| 33 (all) | 16384 | 12,096 MiB | — | ~0.16 s | 4.0 s |
+| 24 | 16384 | 10,798 MiB | 6,209 MiB | 0.257 s | 15892 tok, 4.042 s |
+| 16 | 16384 | 9,056 MiB | 7,963 MiB | 0.339 s | 15892 tok, 4.24 s |
+| 8 | 16384 | 7,308 MiB | 9,716 MiB | 0.409 s | 15892 tok, 4.343 s |
+| 0 | 16384 | 4,698 MiB | 11,248 MiB | 0.465 s | 15892 tok, 4.367 s |
+
+The catalog publishes these as `cuda-<context>-gpu<layers>` profiles, with VRAM (`memory_mib`) and RAM (`host_memory_mib`) at the measured value plus about 10%. The miner uses them only when no full-GPU profile fits.
+
+End to end: with another process holding 9.3 GB of VRAM (5.4 GB free), a fresh `pool-miner --models clef` planned `cuda-8192-gpu0` (2,816 MiB VRAM + 11,008 MiB RAM). Its probe passed in 3.4 s. The README request returned billing 0.987 / angry 0.098 / urgency 1.67 (identical to full GPU) in 0.40 s, and a 7,741-token request took 2.4 s.

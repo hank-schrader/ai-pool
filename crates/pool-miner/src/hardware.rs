@@ -11,6 +11,15 @@ use pool_protocol::{
 const CUDA_MARGIN_MIB: u64 = 256;
 /// Share of unified memory a Metal miner may plan to use (an estimate).
 const UNIFIED_SHARE: f64 = 0.70;
+/// System RAM left for the OS and other programs when weights are offloaded.
+const RAM_MARGIN_MIB: u64 = 2048;
+
+/// Memory the OS could give out now, including reclaimable cache.
+fn available_ram_mib() -> u64 {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    system.available_memory() / (1 << 20)
+}
 
 #[derive(Clone, Debug)]
 pub struct Gpu {
@@ -30,6 +39,9 @@ pub struct Machine {
     /// Memory the profile plan may use on the selected device.
     pub budget_mib: u64,
     pub budget_note: String,
+    /// System RAM offload profiles may use for weights kept on the host;
+    /// 0 where offloading does not apply (unified memory).
+    pub ram_budget_mib: u64,
 }
 
 impl Machine {
@@ -59,8 +71,13 @@ impl Machine {
     pub fn describe(&self) -> String {
         let gpu = self.gpu();
         let driver = if gpu.driver.is_empty() { String::new() } else { format!(", driver {}", gpu.driver) };
+        let ram = if self.ram_budget_mib > 0 {
+            format!("; system RAM for offloading {} MiB (available minus {RAM_MARGIN_MIB} MiB)", self.ram_budget_mib)
+        } else {
+            String::new()
+        };
         format!(
-            "{} {} ({} MiB total, {} MiB free{driver}); planning budget {} MiB ({})",
+            "{} {} ({} MiB total, {} MiB free{driver}); planning budget {} MiB ({}){ram}",
             self.accelerator, gpu.name, gpu.total_mib, gpu.free_mib, self.budget_mib, self.budget_note
         )
     }
@@ -102,6 +119,7 @@ fn detect_nvidia(device: Option<u32>) -> Result<Machine, String> {
         selected,
         budget_mib,
         budget_note: format!("free memory minus {CUDA_MARGIN_MIB} MiB"),
+        ram_budget_mib: available_ram_mib().saturating_sub(RAM_MARGIN_MIB),
     })
 }
 
@@ -152,6 +170,7 @@ fn detect_apple() -> Result<Machine, String> {
         selected: 0,
         budget_mib,
         budget_note: format!("estimate: {:.0}% of unified memory", UNIFIED_SHARE * 100.0),
+        ram_budget_mib: 0,
     })
 }
 

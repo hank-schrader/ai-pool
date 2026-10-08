@@ -93,7 +93,7 @@ async fn serve(state: AppState, label: String, socket: WebSocket) {
             return;
         }
     };
-    if *catalog_revision != *state.catalog_revision {
+    if *catalog_revision != *state.catalog_revision && *catalog_revision != *state.legacy_catalog_revision {
         // Models are still checked one by one against the catalog in Capacity.
         warn!(%label, %miner_id, "miner started with a different catalog revision; restart it to pick up changes");
     }
