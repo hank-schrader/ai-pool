@@ -14,7 +14,7 @@ cp .env.example .env
 docker network ls                  # find Traefik's network, set TRAEFIK_NETWORK
 openssl rand -hex 32               # one per client key / miner token / admin token
 $EDITOR .env
-docker compose up -d --build
+docker compose up -d --build     # or load a prebuilt image: docker save ai-pool-server:latest | ssh host docker load, then docker compose up -d
 curl https://ai.metalloobrabotka.online/readyz
 ```
 
