@@ -78,7 +78,7 @@ fn completion_body_biases_only_the_labels() {
     let body = String::from_utf8(engine::completion_body(&[5, 6], &[10, 11])).unwrap();
     let value: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(value["prompt"], json!([5, 6]));
-    assert_eq!(value["logit_bias"], json!([[10, 16.0], [11, 16.0]]));
+    assert_eq!(value["logit_bias"], json!([[10, 64.0], [11, 64.0]]));
     assert_eq!(value["n_probs"], 2);
     assert_eq!(value["temperature"], 1.0);
     assert!(body.contains("\"temperature\":1.0,"));
