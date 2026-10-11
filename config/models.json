@@ -274,7 +274,7 @@
       "runtime": "llama-b11374",
       "weights": {
         "filename": "h2o-lightning-4b-672dc01e.BF16.gguf",
-        "url": "https://huggingface.co/PLACEHOLDER/resolve/PLACEHOLDER/h2o-lightning-4b-672dc01e.BF16.gguf",
+        "url": "https://huggingface.co/killsan/h2o-lightning-4b-bf16-gguf/resolve/55d18a591b5c2a25b5cf9d083e0e1eabba414c37/h2o-lightning-4b-672dc01e.BF16.gguf",
         "size_bytes": 8424393120,
         "sha256": "74ac588b31d4be40bf2fe1b4e22b58c26ca2d33c26bfefaf45f1446f3ccbbd31"
       },
