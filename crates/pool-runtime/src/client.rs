@@ -83,8 +83,23 @@ impl LocalClient {
         Ok(ChatStream { body: Box::pin(response.bytes_stream()), parser: SseParser::default(), pending: Vec::new() })
     }
 
-    async fn post_json(&self, path: &str, payload: &Value) -> Result<Value, RuntimeError> {
+    pub async fn post_json(&self, path: &str, payload: &Value) -> Result<Value, RuntimeError> {
         let response = check_status(self.send(path, payload).await?).await?;
+        response.json().await.map_err(|error| RuntimeError::failed(format!("invalid runtime response: {error}")))
+    }
+
+    /// Posts an already serialized JSON body (for requests too large to build as a `Value`).
+    pub async fn post_bytes(&self, path: &str, body: Vec<u8>) -> Result<Value, RuntimeError> {
+        let response = self
+            .http
+            .post(format!("{}{}", self.base, path))
+            .bearer_auth(&self.api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| RuntimeError::failed(format!("runtime unreachable: {error}")))?;
+        let response = check_status(response).await?;
         response.json().await.map_err(|error| RuntimeError::failed(format!("invalid runtime response: {error}")))
     }
 

@@ -14,7 +14,7 @@ use axum::{
     extract::DefaultBodyLimit,
     routing::{get, post},
 };
-use pool_protocol::Catalog;
+use pool_protocol::{Backend, Catalog};
 use tower_http::trace::TraceLayer;
 
 use crate::{auth::Auth, config::Config, scheduler::SchedulerHandle};
@@ -24,7 +24,10 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub catalog: Arc<Catalog>,
     pub catalog_revision: Arc<str>,
-    /// The catalog without offload profiles, for miners up to 0.1.2.
+    /// The catalog without h2o models, for miners 0.1.3 that know offload but not h2o.
+    pub offload_catalog: Arc<Catalog>,
+    pub offload_catalog_revision: Arc<str>,
+    /// The catalog without offload profiles and h2o models, for miners up to 0.1.2.
     pub legacy_catalog: Arc<Catalog>,
     pub legacy_catalog_revision: Arc<str>,
     pub auth: Arc<Auth>,
@@ -36,13 +39,17 @@ pub struct AppState {
 impl AppState {
     /// Starts the scheduler task; call inside a Tokio runtime.
     pub fn new(config: Config, catalog: Catalog) -> Self {
-        let mut legacy = catalog.clone();
+        let mut offload = catalog.clone();
+        offload.models.retain(|model| model.backend != Backend::LlamaServerH2o);
+        let mut legacy = offload.clone();
         for model in &mut legacy.models {
             model.profiles.retain(|profile| !profile.offloaded());
         }
         let catalog = Arc::new(catalog);
         Self {
             catalog_revision: catalog.revision().into(),
+            offload_catalog_revision: offload.revision().into(),
+            offload_catalog: Arc::new(offload),
             legacy_catalog_revision: legacy.revision().into(),
             legacy_catalog: Arc::new(legacy),
             auth: Arc::new(Auth::new(&config)),

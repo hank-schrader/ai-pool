@@ -85,19 +85,20 @@ pub async fn admin_status(State(state): State<AppState>, headers: HeaderMap) -> 
     Ok(Json(json!({ "catalog_revision": &*state.catalog_revision, "scheduler": snapshot })))
 }
 
-/// Miners up to 0.1.2 reject unknown catalog fields, so offload profiles are
-/// only sent to miners that ask for them with `?features=offload`.
+/// Miners reject unknown catalog fields, so offload profiles are only sent to
+/// miners that ask for them with `?features=offload`, and h2o models only with
+/// `?features=offload,h2o`.
 pub async fn miner_catalog(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     state.auth.miner(&headers)?;
-    let offload = query.get("features").is_some_and(|features| features.split(',').any(|f| f == "offload"));
-    let (catalog, revision) = if offload {
-        (&state.catalog, &state.catalog_revision)
-    } else {
-        (&state.legacy_catalog, &state.legacy_catalog_revision)
+    let wants = |feature: &str| query.get("features").is_some_and(|f| f.split(',').any(|f| f == feature));
+    let (catalog, revision) = match (wants("offload"), wants("h2o")) {
+        (_, true) => (&state.catalog, &state.catalog_revision),
+        (true, false) => (&state.offload_catalog, &state.offload_catalog_revision),
+        (false, false) => (&state.legacy_catalog, &state.legacy_catalog_revision),
     };
     Ok(Json(json!({ "catalog_revision": &**revision, "catalog": **catalog })))
 }

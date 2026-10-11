@@ -28,7 +28,10 @@ pub struct LaunchSpec {
     pub server: PathBuf,
     pub weights: PathBuf,
     pub backend: Backend,
+    /// Tokens per slot. For H2O this is the prompt limit; the server gets two more.
     pub context_tokens: u32,
+    /// `--parallel` slots (H2O only); Clef and chat always run one.
+    pub slots: u32,
     pub gpu_layers: u32,
     /// Chat only.
     pub batch_tokens: Option<u32>,
@@ -39,19 +42,25 @@ pub struct LaunchSpec {
 
 impl LaunchSpec {
     fn args(&self, port: u16, api_key: &str) -> Vec<String> {
+        let h2o = self.backend == Backend::LlamaServerH2o;
+        let slots = if h2o { self.slots.max(1) } else { 1 };
+        // The pinned server needs prompt < slot context and marks the final readout
+        // truncated at prompt + 1 >= context; two reserved tokens keep the prompt
+        // limit inclusive, as in refactor-tool's engine.
+        let total_context = if h2o { (self.context_tokens + 2) * slots } else { self.context_tokens };
         let mut args = vec![
             "-m".into(),
             self.weights.display().to_string(),
             "-ngl".into(),
             self.gpu_layers.to_string(),
             "-c".into(),
-            self.context_tokens.to_string(),
+            total_context.to_string(),
             "--host".into(),
             "127.0.0.1".into(),
             "--port".into(),
             port.to_string(),
             "--parallel".into(),
-            "1".into(),
+            slots.to_string(),
             "--api-key".into(),
             api_key.into(),
         ];
@@ -60,6 +69,27 @@ impl LaunchSpec {
                 let context = self.context_tokens.to_string();
                 args.extend(["-b".into(), context.clone(), "-ub".into(), context]);
             }
+            // refactor-tool's engine.rs flags for H2O; only the context, slots and -ngl vary
+            Backend::LlamaServerH2o => args.extend(
+                [
+                    "-b",
+                    "2048",
+                    "-ub",
+                    "512",
+                    "-fa",
+                    "on",
+                    "-ctk",
+                    "f16",
+                    "-ctv",
+                    "f16",
+                    "--no-context-shift",
+                    "--cache-ram",
+                    "1024",
+                    "--ctx-checkpoints",
+                    "8",
+                ]
+                .map(String::from),
+            ),
             Backend::LlamaServerChat => {
                 args.extend([
                     "-b".into(),
@@ -243,4 +273,56 @@ fn forward_logs(
             tail.push_back(line);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(backend: Backend, slots: u32) -> LaunchSpec {
+        LaunchSpec {
+            label: "m".into(),
+            server: "llama-server".into(),
+            weights: "m.gguf".into(),
+            backend,
+            context_tokens: 40960,
+            slots,
+            gpu_layers: 99,
+            batch_tokens: None,
+            microbatch_tokens: None,
+            cuda_device: None,
+        }
+    }
+
+    fn value<'a>(args: &'a [String], flag: &str) -> &'a str {
+        let at = args.iter().position(|arg| arg == flag).unwrap();
+        &args[at + 1]
+    }
+
+    #[test]
+    fn h2o_uses_refactor_tools_flags_with_two_reserved_tokens_per_slot() {
+        let args = spec(Backend::LlamaServerH2o, 3).args(1, "key");
+        assert_eq!(value(&args, "-c"), (40962 * 3).to_string());
+        for (flag, expected) in [
+            ("--parallel", "3"),
+            ("-b", "2048"),
+            ("-ub", "512"),
+            ("-fa", "on"),
+            ("-ctk", "f16"),
+            ("-ctv", "f16"),
+            ("--cache-ram", "1024"),
+            ("--ctx-checkpoints", "8"),
+        ] {
+            assert_eq!(value(&args, flag), expected, "{flag}");
+        }
+        assert!(args.contains(&"--no-context-shift".to_string()));
+    }
+
+    #[test]
+    fn clef_keeps_one_slot_and_the_plain_context() {
+        let args = spec(Backend::LlamaServerSystemone, 3).args(1, "key");
+        assert_eq!(value(&args, "-c"), "40960");
+        assert_eq!(value(&args, "--parallel"), "1");
+        assert_eq!(value(&args, "-ub"), "40960");
+    }
 }

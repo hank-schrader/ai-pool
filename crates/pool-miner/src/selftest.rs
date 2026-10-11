@@ -28,7 +28,7 @@ async fn exercise(running: &setup::Running) -> Result<(), String> {
     for hosted in &running.models {
         let model = &hosted.model;
         let ready = hosted.ready().ok_or("runtime not ready")?;
-        let client = ready.client;
+        let client = ready.client.clone();
         println!("== {} ({}, context {})", model.id, ready.profile.id, ready.profile.context_tokens);
         let (operation, body) = match model.backend {
             Backend::LlamaServerSystemone => (
@@ -43,6 +43,18 @@ async fn exercise(running: &setup::Running) -> Result<(), String> {
                     }
                 }),
             ),
+            Backend::LlamaServerH2o => (
+                Operation::Systemone,
+                json!({
+                    "model": model.id,
+                    "state": "Customer message: I was charged twice for my order last week and nobody has replied.",
+                    "questions": {
+                        "angry": {"type": "noul", "instructions": "Is the customer angry?"},
+                        "route": {"type": "choice", "instructions": "Which team should handle this?",
+                                  "criteria": {"billing": null, "shipping": null, "technical": null}}
+                    }
+                }),
+            ),
             Backend::LlamaServerChat => (
                 Operation::ChatCompletions,
                 json!({"model": model.id, "messages": [{"role": "user", "content": "Say hello in five words."}], "max_tokens": 24}),
@@ -52,12 +64,23 @@ async fn exercise(running: &setup::Running) -> Result<(), String> {
             .map_err(|error| format!("{}: {}", error.code, error.message))?;
 
         let started = Instant::now();
-        let counted = hosted.count(&validated.count_payload).await;
+        let mut counted = hosted.count(&validated.count_payload).await;
+        if model.backend == Backend::LlamaServerH2o {
+            // a count is the longest prompt; the response sums one prompt per question
+            let payload = &validated.count_payload;
+            let mut total = 0;
+            for (id, question) in payload["questions"].as_object().into_iter().flatten() {
+                let single = json!({"state": payload["state"], "questions": {id: question}});
+                total += hosted.count(&single).await.map_err(|error| error.to_string())?;
+            }
+            println!("longest prompt: {counted:?}, all questions: {total}");
+            counted = Ok(total);
+        }
         println!("count: {counted:?} in {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
 
         let started = Instant::now();
         let reply = match operation {
-            Operation::Systemone => client.systemone(&validated.payload).await,
+            Operation::Systemone => ready.systemone(&validated.payload).await,
             Operation::ChatCompletions => client.chat(&validated.payload).await,
         };
         match &reply {

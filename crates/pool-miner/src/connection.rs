@@ -15,7 +15,7 @@ use pool_protocol::{
     MinerMessage, Operation, PoolMessage,
     messages::{DeviceSlots, Hardware, JobErrorCode, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, RejectReason, SUBPROTOCOL},
 };
-use pool_runtime::{LocalClient, RuntimeError, client::StreamItem};
+use pool_runtime::{RuntimeError, client::StreamItem};
 use serde_json::Value;
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch},
@@ -29,7 +29,10 @@ use tokio_tungstenite::tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{hosted::Hosted, pool::Pool};
+use crate::{
+    hosted::{Hosted, Ready},
+    pool::Pool,
+};
 
 /// Concurrent token counts; counting needs no device slot.
 const COUNT_CONCURRENCY: usize = 4;
@@ -288,7 +291,7 @@ impl Miner {
                 payload,
             } => {
                 let checked = self.check_job(&model, &model_revision, &profile, required_context_tokens);
-                let (client, permit) = match checked {
+                let (ready, permit) = match checked {
                     Ok(ready) => ready,
                     Err((reason, message)) => {
                         let _ = out.send(MinerMessage::Rejected { attempt_id, reason, message }).await;
@@ -303,7 +306,7 @@ impl Miner {
                 let id = attempt_id.clone();
                 let handle = tokio::spawn(async move {
                     let _permit = permit;
-                    let work = execute(&client, operation, stream, &payload, &id, &out);
+                    let work = execute(&ready, operation, stream, &payload, &id, &out);
                     let outcome = tokio::time::timeout(Duration::from_millis(timeout_ms), work).await;
                     let error = match outcome {
                         Err(_) => {
@@ -316,7 +319,7 @@ impl Miner {
                         if error.code == JobErrorCode::RuntimeFailed
                             && let Some(hosted) = miner.hosted(&model)
                         {
-                            hosted.report_broken(&client);
+                            hosted.report_broken(&ready.client);
                         }
                         let _ = out
                             .send(MinerMessage::JobError {
@@ -352,7 +355,7 @@ impl Miner {
         revision: &str,
         profile: &str,
         required_context: u32,
-    ) -> Result<(LocalClient, OwnedSemaphorePermit), (RejectReason, String)> {
+    ) -> Result<(Ready, OwnedSemaphorePermit), (RejectReason, String)> {
         if self.draining.load(Ordering::SeqCst) {
             return Err((RejectReason::Draining, "miner is shutting down".into()));
         }
@@ -374,11 +377,10 @@ impl Miner {
                 format!("context {} < required {required_context}", ready.profile.context_tokens),
             ));
         }
-        let client = ready.client;
         let Ok(permit) = self.slot.clone().try_acquire_owned() else {
             return Err((RejectReason::Busy, "device slot is busy".into()));
         };
-        Ok((client, permit))
+        Ok((ready, permit))
     }
 
     async fn abort_all(&self) {
@@ -391,7 +393,7 @@ impl Miner {
 }
 
 async fn execute(
-    client: &LocalClient,
+    ready: &Ready,
     operation: Operation,
     stream: bool,
     payload: &Value,
@@ -401,15 +403,15 @@ async fn execute(
     let result = |body| MinerMessage::Result { attempt_id: attempt_id.to_string(), body };
     match (operation, stream) {
         (Operation::Systemone, _) => {
-            let body = client.systemone(payload).await?;
+            let body = ready.systemone(payload).await?;
             let _ = out.send(result(body)).await;
         }
         (Operation::ChatCompletions, false) => {
-            let body = client.chat(payload).await?;
+            let body = ready.client.chat(payload).await?;
             let _ = out.send(result(body)).await;
         }
         (Operation::ChatCompletions, true) => {
-            let mut events = client.chat_stream(payload).await?;
+            let mut events = ready.client.chat_stream(payload).await?;
             let _ = out.send(MinerMessage::StreamStart { attempt_id: attempt_id.into() }).await;
             let mut seq = 0;
             let mut usage = None;

@@ -5,6 +5,7 @@
 pub mod cache;
 pub mod client;
 pub mod download;
+pub mod h2o;
 pub mod helper;
 pub mod install;
 pub mod manifest;
@@ -13,6 +14,7 @@ pub mod sse;
 
 pub use cache::Cache;
 pub use client::{LocalClient, RuntimeError};
+pub use h2o::H2o;
 pub use helper::ClefCounter;
 pub use install::InstalledRuntime;
 pub use process::{LaunchSpec, LlamaServer};

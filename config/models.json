@@ -266,6 +266,44 @@
           "memory_source": "estimate"
         }
       ]
+    },
+    {
+      "id": "h2o",
+      "description": "H2O-Lightning-4B BF16 decision model used by refactor-tool (Apache-2.0, converted from h2oai/h2o-lightning-4b@672dc01e with llama.cpp b92761a --outtype bf16 --no-mtp). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own as refactor-tool's local engine does (policy single). Use POST /v1/systemone.",
+      "backend": "llama-server-h2o",
+      "runtime": "llama-b11374",
+      "weights": {
+        "filename": "h2o-lightning-4b-672dc01e.BF16.gguf",
+        "url": "https://huggingface.co/PLACEHOLDER/resolve/PLACEHOLDER/h2o-lightning-4b-672dc01e.BF16.gguf",
+        "size_bytes": 8424393120,
+        "sha256": "74ac588b31d4be40bf2fe1b4e22b58c26ca2d33c26bfefaf45f1446f3ccbbd31"
+      },
+      "limits": {
+        "request_bytes": 1048576,
+        "max_questions": 16,
+        "max_choice_options": 16,
+        "max_score_levels": 16
+      },
+      "execution": {
+        "gpu_layers": 99
+      },
+      "profiles": [
+        {
+          "id": "cuda-8192",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 9216,
+          "memory_source": "measured"
+        },
+        {
+          "id": "cuda-40960-x3",
+          "accelerator": "cuda",
+          "context_tokens": 40960,
+          "memory_mib": 13312,
+          "memory_source": "measured",
+          "parallel_slots": 3
+        }
+      ]
     }
   ]
 }

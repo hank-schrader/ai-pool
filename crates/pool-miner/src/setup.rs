@@ -122,10 +122,13 @@ pub fn print_plan(choices: &[Choice]) {
             pool_protocol::catalog::MemorySource::Measured => "measured",
             pool_protocol::catalog::MemorySource::Estimate => "estimate",
         };
-        let offload = match (choice.profile.gpu_layers, choice.profile.host_memory_mib) {
+        let mut offload = match (choice.profile.gpu_layers, choice.profile.host_memory_mib) {
             (Some(layers), Some(ram)) => format!(" + {ram} MiB RAM, {layers} layers on the GPU"),
             _ => String::new(),
         };
+        if choice.profile.slots() > 1 {
+            offload.push_str(&format!(", {} cache slots", choice.profile.slots()));
+        }
         eprintln!(
             "  {:<24} {:<18} context {:>6}  {:>6} MiB ({source}){offload}",
             choice.model.id, choice.profile.id, choice.profile.context_tokens, choice.profile.memory_mib
@@ -233,7 +236,7 @@ pub async fn start(
             Backend::LlamaServerSystemone => {
                 Some(start_counter(options.clef_helper.as_deref(), &weights, commit).await?)
             }
-            Backend::LlamaServerChat => None,
+            Backend::LlamaServerChat | Backend::LlamaServerH2o => None,
         };
         let launch = LaunchSpec {
             label: model.id.clone(),
@@ -241,6 +244,7 @@ pub async fn start(
             weights,
             backend: model.backend,
             context_tokens: choice.profile.context_tokens,
+            slots: choice.profile.slots(),
             gpu_layers: model.execution.gpu_layers,
             batch_tokens: model.execution.batch_tokens,
             microbatch_tokens: model.execution.microbatch_tokens,

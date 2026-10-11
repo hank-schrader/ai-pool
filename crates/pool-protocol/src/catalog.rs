@@ -55,12 +55,16 @@ pub enum Backend {
     LlamaServerSystemone,
     /// Text chat on `/v1/chat/completions`.
     LlamaServerChat,
+    /// H2O-Lightning decision model on `/v1/systemone`: one label-only forward
+    /// per question, answered exactly like refactor-tool's local engine.
+    #[serde(rename = "llama-server-h2o")]
+    LlamaServerH2o,
 }
 
 impl Backend {
     pub fn capability(self) -> Capability {
         match self {
-            Backend::LlamaServerSystemone => Capability::Systemone,
+            Backend::LlamaServerSystemone | Backend::LlamaServerH2o => Capability::Systemone,
             Backend::LlamaServerChat => Capability::ChatCompletions,
         }
     }
@@ -180,9 +184,19 @@ pub struct Profile {
     /// Offload profiles only: system RAM the weights left on the host need.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_memory_mib: Option<u64>,
+    /// llama-server `--parallel` slots, each with `context_tokens` of its own
+    /// (H2O only; unset means 1). Slots only share the weights and keep several
+    /// prompts cached; the miner still runs one job at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_slots: Option<u32>,
 }
 
 impl Profile {
+    /// llama-server slots this profile starts.
+    pub fn slots(&self) -> u32 {
+        self.parallel_slots.unwrap_or(1)
+    }
+
     pub fn offloaded(&self) -> bool {
         self.gpu_layers.is_some()
     }
@@ -342,6 +356,24 @@ impl Model {
         let systemone = [limits.max_questions, limits.max_choice_options, limits.max_score_levels];
         let chat = [limits.default_output_tokens, limits.max_output_tokens];
         match self.backend {
+            Backend::LlamaServerH2o => {
+                if systemone.iter().any(Option::is_none) || chat.iter().any(Option::is_some) {
+                    problems.push(format!(
+                        "{at}: h2o limits need max_questions, max_choice_options and max_score_levels only"
+                    ));
+                    return;
+                }
+                if !(1..=255).contains(&limits.max_questions.unwrap()) {
+                    problems.push(format!("{at}: limits.max_questions must be 1-255"));
+                }
+                // one label per option, A-P
+                if !(1..=16).contains(&limits.max_choice_options.unwrap()) {
+                    problems.push(format!("{at}: limits.max_choice_options must be 1-16 (labels A-P)"));
+                }
+                if !(1..=16).contains(&limits.max_score_levels.unwrap()) {
+                    problems.push(format!("{at}: limits.max_score_levels must be 1-16 (labels A-P)"));
+                }
+            }
             Backend::LlamaServerSystemone => {
                 if systemone.iter().any(Option::is_none) || chat.iter().any(Option::is_some) {
                     problems.push(format!(
@@ -375,7 +407,7 @@ impl Model {
     fn profile_problems(&self, at: &str, problems: &mut Vec<String>) {
         let execution = &self.execution;
         match self.backend {
-            Backend::LlamaServerSystemone => {
+            Backend::LlamaServerSystemone | Backend::LlamaServerH2o => {
                 if execution.batch_tokens.is_some() || execution.microbatch_tokens.is_some() {
                     problems.push(format!("{at}: systemone models use batch = microbatch = context; remove them"));
                 }
@@ -404,6 +436,14 @@ impl Model {
             }
             if profile.memory_mib == 0 {
                 problems.push(format!("{at}: profile {:?}: memory_mib must be positive", profile.id));
+            }
+            match profile.parallel_slots {
+                None => {}
+                Some(1..=8) if self.backend == Backend::LlamaServerH2o => {}
+                Some(_) => problems.push(format!(
+                    "{at}: profile {:?}: parallel_slots must be 1-8 and is only supported by h2o models",
+                    profile.id
+                )),
             }
             match (profile.gpu_layers, profile.host_memory_mib) {
                 (None, None) => {}
@@ -484,6 +524,21 @@ mod tests {
         let catalog = Catalog::parse(&value.to_string()).unwrap();
         let ranked = catalog.models[0].profiles_for(Accelerator::Cuda);
         assert!(ranked.first().unwrap().offloaded(), "offload ranks below every full-GPU profile");
+    }
+
+    #[test]
+    fn h2o_is_a_systemone_model_with_slots_on_its_big_profile() {
+        let catalog = Catalog::parse(SHIPPED).unwrap();
+        let h2o = catalog.model("h2o").unwrap();
+        assert_eq!(h2o.capability(), Capability::Systemone);
+        assert_eq!(serde_json::to_string(&h2o.backend).unwrap(), "\"llama-server-h2o\"");
+        assert_eq!(h2o.profile("cuda-40960-x3").unwrap().slots(), 3);
+        assert_eq!(h2o.profile("cuda-8192").unwrap().slots(), 1);
+
+        let mut value: serde_json::Value = serde_json::from_str(SHIPPED).unwrap();
+        value["models"][0]["profiles"][0]["parallel_slots"] = 2.into();
+        let error = Catalog::parse(&value.to_string()).unwrap_err().to_string();
+        assert!(error.contains("parallel_slots"), "{error}");
     }
 
     #[test]

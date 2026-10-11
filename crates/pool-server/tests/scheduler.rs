@@ -499,7 +499,23 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
     let parsed = Catalog::parse(&legacy["catalog"].to_string()).unwrap();
     assert_eq!(parsed.revision(), legacy["catalog_revision"].as_str().unwrap());
 
-    let current: Value =
+    let has_h2o =
+        |reply: &Value| reply["catalog"]["models"].as_array().unwrap().iter().any(|model| model["id"] == "h2o");
+    assert!(!has_h2o(&legacy));
+
+    let offload: Value =
         reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload")).await.unwrap().json().await.unwrap();
-    assert!(count_offload(current) > 0);
+    assert!(count_offload(offload.clone()) > 0);
+    assert!(!has_h2o(&offload), "miners that do not know h2o never see it");
+    let parsed = Catalog::parse(&offload["catalog"].to_string()).unwrap();
+    assert_eq!(parsed.revision(), offload["catalog_revision"].as_str().unwrap());
+
+    let current: Value = reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload,h2o"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(count_offload(current.clone()) > 0);
+    assert!(has_h2o(&current));
 }

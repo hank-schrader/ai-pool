@@ -53,7 +53,7 @@ impl Validated {
 /// `body` has already been parsed and its `model` resolved to `model`.
 pub fn validate(operation: Operation, model: &Model, body: Map<String, Value>) -> Result<Validated, RequestError> {
     match (operation, model.backend) {
-        (Operation::Systemone, Backend::LlamaServerSystemone) => systemone(model, body),
+        (Operation::Systemone, Backend::LlamaServerSystemone | Backend::LlamaServerH2o) => systemone(model, body),
         (Operation::ChatCompletions, Backend::LlamaServerChat) => chat(model, body),
         _ => Err(RequestError {
             code: "unsupported_capability",
@@ -61,7 +61,7 @@ pub fn validate(operation: Operation, model: &Model, body: Map<String, Value>) -
                 "model {:?} serves {}; use its endpoint instead",
                 model.id,
                 match model.backend {
-                    Backend::LlamaServerSystemone => "POST /v1/systemone",
+                    Backend::LlamaServerSystemone | Backend::LlamaServerH2o => "POST /v1/systemone",
                     Backend::LlamaServerChat => "POST /v1/chat/completions",
                 }
             ),
@@ -77,6 +77,10 @@ fn systemone(model: &Model, mut body: Map<String, Value>) -> Result<Validated, R
         limits.max_choice_options.unwrap_or(16),
         limits.max_score_levels.unwrap_or(10),
     );
+    // H2O accepts one-option questions (labels A-P) and the "yes"/"no" aliases of
+    // the noul sides, as refactor-tool's engine does
+    let h2o = model.backend == Backend::LlamaServerH2o;
+    let min_options = if h2o { 1 } else { 2 };
     body.remove("model");
     if body.remove("stream").is_some_and(|stream| stream != Value::Bool(false)) {
         return Err(RequestError {
@@ -126,30 +130,35 @@ fn systemone(model: &Model, mut body: Map<String, Value>) -> Result<Validated, R
         let criteria_at = Some(format!("{at}.criteria"));
         match question.get("type").and_then(Value::as_str) {
             Some("choice") => match criteria {
-                Some(Value::Object(options)) if (2..=max_options).contains(&options.len()) => {
+                Some(Value::Object(options)) if (min_options..=max_options).contains(&options.len()) => {
                     if options.keys().any(String::is_empty) {
                         return Err(RequestError::invalid("choice option keys must not be empty", criteria_at));
                     }
                 }
                 _ => {
                     return Err(RequestError::invalid(
-                        format!("a choice question needs \"criteria\" with 2-{max_options} options"),
+                        format!("a choice question needs \"criteria\" with {min_options}-{max_options} options"),
                         criteria_at,
                     ));
                 }
             },
             Some("score") => match criteria {
-                Some(Value::Array(levels)) if (2..=max_levels).contains(&levels.len()) => {}
+                Some(Value::Array(levels)) if (min_options..=max_levels).contains(&levels.len()) => {}
                 _ => {
                     return Err(RequestError::invalid(
-                        format!("a score question needs \"criteria\" with 2-{max_levels} levels, lowest first"),
+                        format!(
+                            "a score question needs \"criteria\" with {min_options}-{max_levels} levels, lowest first"
+                        ),
                         criteria_at,
                     ));
                 }
             },
             Some("noul") => match criteria {
                 None => {}
-                Some(Value::Object(sides)) if sides.keys().all(|key| key == "true" || key == "false") => {}
+                Some(Value::Object(sides))
+                    if sides.keys().all(|key| {
+                        matches!(key.as_str(), "true" | "false") || (h2o && matches!(key.as_str(), "yes" | "no"))
+                    }) => {}
                 Some(_) => {
                     return Err(RequestError::invalid(
                         "noul \"criteria\" may only describe \"true\" and \"false\"",
@@ -409,6 +418,26 @@ mod tests {
         let streaming =
             json!({"stream": true, "state": "x", "questions": {"q": {"type": "noul", "instructions": "x"}}});
         assert_eq!(validate(Operation::Systemone, clef, body(streaming)).unwrap_err().code, "unsupported_streaming");
+    }
+
+    #[test]
+    fn h2o_takes_one_option_questions_and_noul_aliases_but_no_more_than_16() {
+        let catalog = catalog();
+        let h2o = catalog.model("h2o").unwrap();
+        let ok = json!({"state": {"a": 1}, "questions": {
+            "one": {"type": "choice", "instructions": "x", "criteria": {"only": null}},
+            "yes": {"type": "noul", "instructions": "x", "criteria": {"yes": "it is", "no": "it is not"}},
+            "lvl": {"type": "score", "instructions": "x", "criteria": ["low"]}
+        }});
+        assert!(validate(Operation::Systemone, h2o, body(ok)).is_ok());
+        let options: serde_json::Map<String, Value> = (0..17).map(|i| (format!("o{i}"), Value::Null)).collect();
+        let many =
+            json!({"state": "x", "questions": {"q": {"type": "choice", "instructions": "x", "criteria": options}}});
+        assert_eq!(validate(Operation::Systemone, h2o, body(many)).unwrap_err().code, "invalid_request");
+        let clef = catalog.model("clef").unwrap();
+        let alias =
+            json!({"state": "x", "questions": {"q": {"type": "noul", "instructions": "x", "criteria": {"yes": "y"}}}});
+        assert_eq!(validate(Operation::Systemone, clef, body(alias)).unwrap_err().code, "invalid_request");
     }
 
     #[test]

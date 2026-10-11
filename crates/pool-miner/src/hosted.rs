@@ -14,7 +14,7 @@ use std::{
 };
 
 use pool_protocol::{Backend, Model, Profile, messages::LoadedModel};
-use pool_runtime::{ClefCounter, LaunchSpec, LlamaServer, LocalClient, RuntimeError};
+use pool_runtime::{ClefCounter, H2o, LaunchSpec, LlamaServer, LocalClient, RuntimeError};
 use serde_json::{Value, json};
 use tokio::{
     sync::{Notify, watch},
@@ -35,6 +35,18 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct Ready {
     pub client: LocalClient,
     pub profile: Profile,
+    /// H2O models only: the verified-label engine that renders and answers questions.
+    pub h2o: Option<H2o>,
+}
+
+impl Ready {
+    /// Runs a validated systemone payload: Clef's own endpoint, or H2O's per-question forwards.
+    pub async fn systemone(&self, payload: &Value) -> Result<Value, RuntimeError> {
+        match &self.h2o {
+            Some(h2o) => h2o.answer(payload).await,
+            None => self.client.systemone(payload).await,
+        }
+    }
 }
 
 pub struct Hosted {
@@ -83,10 +95,6 @@ impl Hosted {
         self.ready.borrow().clone()
     }
 
-    pub fn client(&self) -> Option<LocalClient> {
-        self.ready().map(|ready| ready.client)
-    }
-
     pub fn subscribe(&self) -> watch::Receiver<Option<Ready>> {
         self.ready.subscribe()
     }
@@ -114,15 +122,18 @@ impl Hosted {
     }
 
     /// Exact input tokens of a payload for this model.
+    /// For H2O that is the longest single question prompt, which is what the
+    /// context must hold; the response's `usage.input_tokens` sums all questions.
     pub async fn count(&self, payload: &Value) -> Result<u32, RuntimeError> {
-        match &self.counter {
-            Some(counter) => counter.count(payload).await,
-            None => {
-                let client = self.client().ok_or_else(|| {
-                    RuntimeError::new(pool_protocol::messages::JobErrorCode::RuntimeFailed, "runtime is restarting")
-                })?;
-                client.chat_input_tokens(payload).await
-            }
+        if let Some(counter) = &self.counter {
+            return counter.count(payload).await;
+        }
+        let ready = self.ready().ok_or_else(|| {
+            RuntimeError::new(pool_protocol::messages::JobErrorCode::RuntimeFailed, "runtime is restarting")
+        })?;
+        match &ready.h2o {
+            Some(h2o) => h2o.count(payload).await,
+            None => ready.client.chat_input_tokens(payload).await,
         }
     }
 
@@ -138,6 +149,7 @@ impl Hosted {
                 let profile = hosted.profiles[level].clone();
                 let mut launch = hosted.launch.clone();
                 launch.context_tokens = profile.context_tokens;
+                launch.slots = profile.slots();
                 if let Some(layers) = profile.gpu_layers {
                     launch.gpu_layers = layers;
                 }
@@ -156,7 +168,7 @@ impl Hosted {
                                 return;
                             }
                         };
-                        if let Err(problem) = probed {
+                        if let Err(problem) = &probed {
                             server.stop();
                             let _ = tokio::time::timeout(Duration::from_secs(10), server.wait_exit()).await;
                             if let Some(next) = hosted.profiles.get(level + 1) {
@@ -180,13 +192,14 @@ impl Hosted {
                             );
                             return;
                         }
+                        let h2o = probed.ok().flatten();
                         tracing::info!(
                             "{label}: {} passed its {}-token probe in {:.1}s",
                             profile.id,
                             profile.context_tokens,
                             started.elapsed().as_secs_f64()
                         );
-                        hosted.ready.send_replace(Some(Ready { client: server.client().clone(), profile }));
+                        hosted.ready.send_replace(Some(Ready { client: server.client().clone(), profile, h2o }));
                         changes.send_modify(|n| *n += 1);
                         let reason = loop {
                             tokio::select! {
@@ -233,8 +246,9 @@ impl Hosted {
 }
 
 /// Runs one request that fills most of the context, so the whole working set
-/// is really allocated and used once before the profile is advertised.
-async fn probe(client: &LocalClient, backend: Backend, context: u32) -> Result<(), String> {
+/// is really allocated and used once before the profile is advertised. H2O first
+/// verifies its label tokens and returns the engine the jobs will use.
+async fn probe(client: &LocalClient, backend: Backend, context: u32) -> Result<Option<H2o>, String> {
     // leaves room for the prompt template and the question around the filler
     let words = (context as usize * 85 / 100).saturating_sub(200);
     let filler = "please ".repeat(words);
@@ -246,15 +260,24 @@ async fn probe(client: &LocalClient, backend: Backend, context: u32) -> Result<(
                     "questions": {"probe": {"type": "noul", "instructions": "Is this text repetitive?"}}
                 }))
                 .await
-                .map(drop),
+                .map(|_| None),
             Backend::LlamaServerChat => client
                 .chat(&json!({"messages": [{"role": "user", "content": filler}], "max_tokens": 1}))
                 .await
-                .map(drop),
+                .map(|_| None),
+            Backend::LlamaServerH2o => {
+                let h2o = H2o::start(client.clone(), context).await?;
+                h2o.answer(&json!({
+                    "state": filler,
+                    "questions": {"probe": {"type": "noul", "instructions": "Is this text repetitive?"}}
+                }))
+                .await
+                .map(|_| Some(h2o))
+            }
         }
     };
     match tokio::time::timeout(PROBE_TIMEOUT, request).await {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(h2o)) => Ok(h2o),
         Ok(Err(error)) => Err(error.message),
         Err(_) => Err(format!("no answer within {}s", PROBE_TIMEOUT.as_secs())),
     }
