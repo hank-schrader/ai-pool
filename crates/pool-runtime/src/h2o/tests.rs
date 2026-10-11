@@ -74,14 +74,11 @@ fn probabilities_and_noul_commit() {
 }
 
 #[test]
-fn completion_body_masks_every_other_token() {
+fn completion_body_biases_only_the_labels() {
     let body = String::from_utf8(engine::completion_body(&[5, 6], &[10, 11])).unwrap();
     let value: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(value["prompt"], json!([5, 6]));
-    let mask = value["logit_bias"].as_array().unwrap();
-    assert_eq!(mask.len(), 248_320 - 2);
-    assert_eq!(mask[0], json!([0, false]));
-    assert!(mask.iter().all(|entry| entry[0] != 10 && entry[0] != 11));
+    assert_eq!(value["logit_bias"], json!([[10, 16.0], [11, 16.0]]));
     assert_eq!(value["n_probs"], 2);
     assert_eq!(value["temperature"], 1.0);
     assert!(body.contains("\"temperature\":1.0,"));

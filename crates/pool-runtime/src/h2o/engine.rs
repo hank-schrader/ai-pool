@@ -174,11 +174,20 @@ fn prefixed(id: &str, error: RuntimeError) -> RuntimeError {
     RuntimeError::new(error.code, format!("question {id:?}: {}", error.message))
 }
 
-/// The exact body refactor-tool sends: every non-label token is masked with
-/// `[id,false]` so the sampler distribution covers the labels only. Built as
-/// text, since the mask has 248,320 entries.
+/// The label bias of `/completion`. Instead of masking all 248,320 other tokens
+/// (a 3.8 MB body llama-server must parse and apply), every label gets this
+/// positive bias. The labels' logits shift by the same constant, so their
+/// softmax is unchanged, while the other tokens' share becomes e^-16 times what
+/// it was; at the answer slot no other token is more than a few nats above a
+/// label, so `top_probs` still holds exactly the labels. 16 is exact in f32 and
+/// small enough not to cost precision: logit + 16 stays below 64, where f32
+/// spacing is 4e-6, and a bias of 1e4 would round logits to 1e-3.
+const LABEL_BIAS: f64 = 16.0;
+
+/// The body sent to `/completion`: the prompt tokens and the label bias, with
+/// refactor-tool's sampling settings. Built as text; the prompt can be 40,000 tokens.
 pub(super) fn completion_body(tokens: &[u32], labels: &[u32]) -> Vec<u8> {
-    let mut body = String::with_capacity(tokens.len() * 7 + VOCAB_SIZE as usize * 14 + 512);
+    let mut body = String::with_capacity(tokens.len() * 7 + 512);
     body.push_str("{\"prompt\":[");
     for (i, id) in tokens.iter().enumerate() {
         if i > 0 {
@@ -187,13 +196,11 @@ pub(super) fn completion_body(tokens: &[u32], labels: &[u32]) -> Vec<u8> {
         let _ = write!(body, "{id}");
     }
     body.push_str("],\"logit_bias\":[");
-    let mut first = true;
-    for id in (0..VOCAB_SIZE).filter(|id| !labels.contains(id)) {
-        if !first {
+    for (i, id) in labels.iter().enumerate() {
+        if i > 0 {
             body.push(',');
         }
-        first = false;
-        let _ = write!(body, "[{id},false]");
+        let _ = write!(body, "[{id},{LABEL_BIAS:?}]");
     }
     let _ = write!(
         body,
