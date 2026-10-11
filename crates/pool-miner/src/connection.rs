@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
@@ -12,7 +12,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use pool_protocol::{
-    MinerMessage, Operation, PoolMessage,
+    Backend, MinerMessage, Operation, PoolMessage,
     messages::{DeviceSlots, Hardware, JobErrorCode, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, RejectReason, SUBPROTOCOL},
 };
 use pool_runtime::{RuntimeError, client::StreamItem};
@@ -45,6 +45,9 @@ pub struct Miner {
     pub device: String,
     pub models: Vec<Arc<Hosted>>,
     pub changes: watch::Receiver<u64>,
+    /// H2O jobs accepted beyond the llama-server slots (`--prefetch`); unset
+    /// means as many as the profile has slots.
+    prefetch: OnceLock<u32>,
     /// Set by Ctrl-C: reject new jobs, finish active ones.
     pub draining: AtomicBool,
     /// Cancelled once draining is over; ends the session loop.
@@ -79,6 +82,7 @@ impl Miner {
             device,
             models,
             changes,
+            prefetch: OnceLock::new(),
             draining: AtomicBool::new(false),
             shutdown: CancellationToken::new(),
             running: Arc::new(AtomicUsize::new(0)),
@@ -86,6 +90,11 @@ impl Miner {
             active: Mutex::new(HashMap::new()),
             out: Mutex::new(None),
         })
+    }
+
+    /// Sets the H2O prefetch; call before the session starts.
+    pub fn set_prefetch(&self, prefetch: u32) {
+        let _ = self.prefetch.set(prefetch);
     }
 
     pub fn active_jobs(&self) -> usize {
@@ -248,12 +257,27 @@ impl Miner {
         }
     }
 
-    /// Concurrent jobs the device accepts: the loaded profile's llama-server slots.
-    /// With several models loaded it is the smallest of theirs, so a one-slot
-    /// model (Clef, chat) never gets more than one job, and sharing a GPU keeps
-    /// the one-job-at-a-time behaviour those models were qualified with.
+    /// Concurrent jobs the device accepts: per loaded model, the profile's
+    /// llama-server slots, plus for H2O a prefetch of further jobs. A prefetched
+    /// job is rendered, tokenized and sent while the slots are busy; llama-server
+    /// queues its request until a slot frees, so the GPU is not left waiting for
+    /// the next question to be prepared. With several models loaded it is the
+    /// smallest of theirs, so a one-slot model (Clef, chat) never gets more than
+    /// one job, and sharing a GPU keeps the one-job-at-a-time behaviour those
+    /// models were qualified with.
     fn device_slots(&self) -> u32 {
-        self.models.iter().filter_map(|hosted| hosted.ready()).map(|ready| ready.profile.slots()).min().unwrap_or(1)
+        self.models
+            .iter()
+            .filter_map(|hosted| {
+                let slots = hosted.ready()?.profile.slots();
+                let prefetch = match hosted.model.backend {
+                    Backend::LlamaServerH2o => self.prefetch.get().copied().unwrap_or(slots),
+                    _ => 0,
+                };
+                Some(slots + prefetch)
+            })
+            .min()
+            .unwrap_or(1)
     }
 
     fn hosted(&self, model: &str) -> Option<&Arc<Hosted>> {
@@ -315,6 +339,7 @@ impl Miner {
                 let id = attempt_id.clone();
                 let handle = tokio::spawn(async move {
                     let _permit = permit;
+                    // the deadline also covers the wait in llama-server's queue
                     let work = execute(&ready, operation, stream, &payload, &id, &out);
                     let outcome = tokio::time::timeout(Duration::from_millis(timeout_ms), work).await;
                     let error = match outcome {

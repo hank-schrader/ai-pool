@@ -61,6 +61,10 @@ pub struct Cli {
     /// Run a runtime build that has not been qualified on real hardware yet.
     #[arg(long, global = true)]
     allow_unqualified_runtime: bool,
+    /// H2O jobs accepted beyond the llama-server slots so the next questions are
+    /// prepared while the GPU works (default: as many as the slots; 0 disables).
+    #[arg(long, global = true)]
+    prefetch: Option<u32>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -206,6 +210,9 @@ async fn run(cli: &Cli) -> Result<(), String> {
         running.models.clone(),
         running.changes.clone(),
     );
+    if let Some(prefetch) = cli.prefetch {
+        miner.set_prefetch(prefetch);
+    }
     let session = tokio::spawn(miner.clone().run());
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
