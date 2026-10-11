@@ -302,6 +302,22 @@
           "memory_mib": 13312,
           "memory_source": "measured",
           "parallel_slots": 3
+        },
+        {
+          "id": "cuda-40960-x4",
+          "accelerator": "cuda",
+          "context_tokens": 40960,
+          "memory_mib": 14336,
+          "memory_source": "estimate",
+          "parallel_slots": 4
+        },
+        {
+          "id": "cuda-40960-x6",
+          "accelerator": "cuda",
+          "context_tokens": 40960,
+          "memory_mib": 17408,
+          "memory_source": "estimate",
+          "parallel_slots": 6
         }
       ]
     }

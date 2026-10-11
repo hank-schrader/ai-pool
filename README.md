@@ -159,8 +159,13 @@ Backends: `llama-server-systemone` (Clef), `llama-server-chat`, and
 prompt, per slot (the server gets two more tokens, as in refactor-tool), and the
 optional `parallel_slots` is the llama-server slot count: `h2o`'s
 `cuda-40960-x3` runs 3 slots of 40,960 tokens (+12,472 MiB peak on an RTX 5070 Ti,
-see `docs/qualification/h2o-offload.md`), `cuda-8192` runs one. Slots share the
-weights and keep several records cached; a miner still runs one job at a time.
+see `docs/qualification/h2o-offload.md`), `cuda-8192` runs one. `cuda-40960-x4`
+(16 GB cards) and `cuda-40960-x6` (24 GB cards) are memory estimates, not yet
+measured. Slots share the weights and keep several records cached. An H2O miner
+accepts as many jobs as slots plus a prefetch (default: as many again, `--prefetch N`
+changes it, 0 turns it off), so the next questions are prepared while the GPU works;
+llama-server queues the extra requests, and the job deadline includes that wait.
+Clef and chat models run one job at a time.
 
 A profile is one tested setting: these weights at this context need this much
 accelerator memory. **Offload profiles** (`cuda-<context>-gpu<layers>`, with

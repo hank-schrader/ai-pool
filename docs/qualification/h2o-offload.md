@@ -22,3 +22,7 @@ The record is this repository's Rust sources and docs, trimmed so the prompt is 
 ## Served by the pool as `h2o`
 
 The catalog model `h2o` (backend `llama-server-h2o`) runs this same configuration: the miner starts the pinned llama-server with the flags above for the profile's context and slots (`cuda-40960-x3`: `-c 122886 -np 3`; `cuda-8192`: `-c 8194 -np 1`), runs the label check at startup, and answers `POST /v1/systemone` with refactor-tool's `single` policy. Memory is measured with the miner's own startup probe (a prompt of 85% of the context, minus 200 words) on the RTX 5070 Ti with 1.4 GB used by the desktop: `cuda-8192` peaked at +8768 MiB (catalog 9216 MiB) and `cuda-40960-x3` at +12472 MiB (catalog 13312 MiB).
+
+Profiles `cuda-40960-x4` and `cuda-40960-x6` are estimates, not measurements: each extra 40,960-token slot costs about 1.3 GiB (KV and recurrent state, derived from the two peaks above), so x4 is about 13.8 GB and x6 about 16.5 GB, published with about 5-6% headroom. The startup probe fills one slot to 85% of the context and validates the profile; on failure the miner steps down to the next smaller one.
+
+The `/completion` request no longer sends the 248,320-entry mask. It sends `logit_bias` only for the question's label tokens, each with a positive bias, so the labels dominate the distribution and `top_probs` holds exactly them.

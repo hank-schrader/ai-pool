@@ -185,8 +185,8 @@ pub struct Profile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_memory_mib: Option<u64>,
     /// llama-server `--parallel` slots, each with `context_tokens` of its own
-    /// (H2O only; unset means 1). Slots only share the weights and keep several
-    /// prompts cached; the miner still runs one job at a time.
+    /// (H2O only; unset means 1). Slots share the weights and run that many
+    /// questions at once; the miner may queue a few more in front of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_slots: Option<u32>,
 }
@@ -202,9 +202,9 @@ impl Profile {
     }
 
     /// Ordering of preference, best last: everything on the GPU beats any
-    /// offload, then more context, then more layers on the GPU.
-    pub fn preference(&self) -> (bool, u32, u32) {
-        (!self.offloaded(), self.context_tokens, self.gpu_layers.unwrap_or(u32::MAX))
+    /// offload, then more context, then more layers on the GPU, then more slots.
+    pub fn preference(&self) -> (bool, u32, u32, u32) {
+        (!self.offloaded(), self.context_tokens, self.gpu_layers.unwrap_or(u32::MAX), self.slots())
     }
 }
 
@@ -461,7 +461,7 @@ impl Model {
         for accelerator in [Accelerator::Cuda, Accelerator::Metal] {
             let keys: Vec<_> = self.profiles_for(accelerator).iter().map(|p| p.preference()).collect();
             if keys.windows(2).any(|pair| pair[0] == pair[1]) {
-                problems.push(format!("{at}: two {accelerator} profiles have the same context and GPU layers"));
+                problems.push(format!("{at}: two {accelerator} profiles have the same context, GPU layers and slots"));
             }
         }
     }
@@ -534,6 +534,8 @@ mod tests {
         assert_eq!(serde_json::to_string(&h2o.backend).unwrap(), "\"llama-server-h2o\"");
         assert_eq!(h2o.profile("cuda-40960-x3").unwrap().slots(), 3);
         assert_eq!(h2o.profile("cuda-8192").unwrap().slots(), 1);
+        let ranked: Vec<_> = h2o.profiles_for(Accelerator::Cuda).iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ranked, ["cuda-8192", "cuda-40960-x3", "cuda-40960-x4", "cuda-40960-x6"]);
 
         let mut value: serde_json::Value = serde_json::from_str(SHIPPED).unwrap();
         value["models"][0]["profiles"][0]["parallel_slots"] = 2.into();
