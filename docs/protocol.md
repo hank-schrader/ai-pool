@@ -6,7 +6,7 @@ messages are JSON text frames, tagged by `type`; the types live in
 
 ## Connection
 
-1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models.
+1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models. Miners reject unknown catalog fields, so the pool leaves out what a miner did not ask for: offload profiles unless `?features=offload`, and `h2o` models (backend `llama-server-h2o`, profile field `parallel_slots`) unless `?features=offload,h2o`.
 2. `GET /miner/v1/connect` upgrades to WebSocket with subprotocol `ai-pool.v1`. In `keys` mode it needs `Authorization: Bearer <miner token>`; client API keys are rejected. Frames are limited to 4 MiB.
 3. The miner sends `hello` within 10 s: protocol version, installation `miner_id`, version, catalog revision and hardware. The pool answers `welcome {session_id, heartbeat_seconds}`, or `error` and closes (e.g. `protocol_mismatch`).
 4. The miner sends `capacity`, a full snapshot of devices (`slots` concurrent inferences each) and loaded models (`model`, `model_revision`, `profile`, `device`, `context_tokens`). The pool ignores entries whose revision or profile does not match its catalog. A new snapshot replaces the old one.
@@ -21,9 +21,9 @@ Before a request is queued, the pool asks one miner serving the model to count i
 - pool → `count_tokens {count_id, model, model_revision, operation, payload}`
 - miner → `count_result {count_id, input_tokens}` or `count_error {count_id, code, message}`
 
-Clef counts through `clef-token-count`, which runs the pinned llama-server's own prompt path. Chat models count through the runtime's `/v1/chat/completions/input_tokens`. Counting uses no device slot.
+Clef counts through `clef-token-count`, which runs the pinned llama-server's own prompt path. Chat models count through the runtime's `/v1/chat/completions/input_tokens`. H2O renders each question's prompt like refactor-tool and tokenizes it with its own llama-server (`/tokenize`); its count is the longest single question prompt, since questions run one after another. Counting uses no device slot.
 
-The required context is the input tokens for systemone. For chat it is input + reserved output (`max_tokens`, default 512) + 1. The pool routes to the **smallest loaded profile that fits**, then the least busy device, then round robin.
+The required context is the input tokens for systemone. For H2O a profile's `context_tokens` is an inclusive prompt limit, so a prompt of exactly that many tokens fits. A longer prompt is `context_length_exceeded`; a malformed question is `invalid_request`. For chat it is input + reserved output (`max_tokens`, default 512) + 1. The pool routes to the **smallest loaded profile that fits**, then the least busy device, then round robin.
 
 ## Jobs
 

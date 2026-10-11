@@ -15,7 +15,15 @@ client ──HTTP──▶ pool-server ◀──WebSocket── pool-miner ─�
 The default model is **Clef** (`clef`), a decision model that answers choice,
 score and yes/no questions with probabilities through `POST /v1/systemone`.
 The catalog also ships a small chat model, `qwen2.5-1.5b-instruct`, for
-OpenAI-compatible `POST /v1/chat/completions`, with streaming.
+OpenAI-compatible `POST /v1/chat/completions`, with streaming, and **H2O**
+(`h2o`), the BF16 H2O-Lightning-4B decision model of
+[refactor-tool](https://github.com/hank-schrader/refactor-tool), also on
+`POST /v1/systemone`. H2O reads each question on its own and answers exactly
+like refactor-tool's local engine with its default policy `single`: same
+prompt, label-only forward pass, temperature 0.8 and yes/no commit rule, so
+`answers.<id>.noul` and `answers.<id>.probabilities` match the local numbers.
+Questions take 1-16 options; `usage.input_tokens` sums the prompts of all
+questions.
 
 ## Quickstart (one machine)
 
@@ -145,6 +153,14 @@ Errors are OpenAI-shaped, with `code`, `request_id` and `retryable`; see [docs/p
   ]
 }
 ```
+
+Backends: `llama-server-systemone` (Clef), `llama-server-chat`, and
+`llama-server-h2o`. An H2O profile's `context_tokens` is the longest accepted
+prompt, per slot (the server gets two more tokens, as in refactor-tool), and the
+optional `parallel_slots` is the llama-server slot count: `h2o`'s
+`cuda-40960-x3` runs 3 slots of 40,960 tokens (+12,472 MiB peak on an RTX 5070 Ti,
+see `docs/qualification/h2o-offload.md`), `cuda-8192` runs one. Slots share the
+weights and keep several records cached; a miner still runs one job at a time.
 
 A profile is one tested setting: these weights at this context need this much
 accelerator memory. **Offload profiles** (`cuda-<context>-gpu<layers>`, with

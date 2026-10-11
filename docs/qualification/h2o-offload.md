@@ -18,3 +18,7 @@ The record is this repository's Rust sources and docs, trimmed so the prompt is 
 - Answers agree across machines: "rust" 0.913 vs 0.908; the yes/no question 0.493 vs 0.471.
 - Follow-up questions about the same record re-evaluate only about 500 tokens. The hybrid model (8 attention + 24 recurrent layers) restores the last context checkpoint, so a cached record costs about 2.5 s per question on the laptop instead of 92 s.
 - On the desktop GPU with `-ngl 0`, a microbatch of 2048 instead of 512 processed 32k-token prompts 2.4× faster (12.6 s vs 30.5 s) for 0.3 GB more VRAM. It was not measured on the laptop.
+
+## Served by the pool as `h2o`
+
+The catalog model `h2o` (backend `llama-server-h2o`) runs this same configuration: the miner starts the pinned llama-server with the flags above for the profile's context and slots (`cuda-40960-x3`: `-c 122886 -np 3`; `cuda-8192`: `-c 8194 -np 1`), runs the label check at startup, and answers `POST /v1/systemone` with refactor-tool's `single` policy. Memory is measured with the miner's own startup probe (a prompt of 85% of the context, minus 200 words) on the RTX 5070 Ti with 1.4 GB used by the desktop: `cuda-8192` peaked at +8768 MiB (catalog 9216 MiB) and `cuda-40960-x3` at +12472 MiB (catalog 13312 MiB).
