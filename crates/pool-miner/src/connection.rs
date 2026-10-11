@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -18,7 +18,7 @@ use pool_protocol::{
 use pool_runtime::{RuntimeError, client::StreamItem};
 use serde_json::Value;
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch},
+    sync::{Semaphore, mpsc, watch},
     task::JoinHandle,
 };
 use tokio_tungstenite::tungstenite::{
@@ -49,7 +49,8 @@ pub struct Miner {
     pub draining: AtomicBool,
     /// Cancelled once draining is over; ends the session loop.
     pub shutdown: CancellationToken,
-    slot: Arc<Semaphore>,
+    /// Jobs accepted and not finished; limited by [`Miner::device_slots`].
+    running: Arc<AtomicUsize>,
     counts: Arc<Semaphore>,
     active: Mutex<HashMap<String, JoinHandle<()>>>,
     out: Mutex<Option<mpsc::Sender<MinerMessage>>>,
@@ -80,7 +81,7 @@ impl Miner {
             changes,
             draining: AtomicBool::new(false),
             shutdown: CancellationToken::new(),
-            slot: Arc::new(Semaphore::new(1)),
+            running: Arc::new(AtomicUsize::new(0)),
             counts: Arc::new(Semaphore::new(COUNT_CONCURRENCY)),
             active: Mutex::new(HashMap::new()),
             out: Mutex::new(None),
@@ -242,9 +243,17 @@ impl Miner {
 
     fn capacity(&self) -> MinerMessage {
         MinerMessage::Capacity {
-            devices: vec![DeviceSlots { id: self.device.clone(), slots: 1 }],
+            devices: vec![DeviceSlots { id: self.device.clone(), slots: self.device_slots() }],
             models: self.models.iter().filter_map(|hosted| hosted.loaded()).collect(),
         }
+    }
+
+    /// Concurrent jobs the device accepts: the loaded profile's llama-server slots.
+    /// With several models loaded it is the smallest of theirs, so a one-slot
+    /// model (Clef, chat) never gets more than one job, and sharing a GPU keeps
+    /// the one-job-at-a-time behaviour those models were qualified with.
+    fn device_slots(&self) -> u32 {
+        self.models.iter().filter_map(|hosted| hosted.ready()).map(|ready| ready.profile.slots()).min().unwrap_or(1)
     }
 
     fn hosted(&self, model: &str) -> Option<&Arc<Hosted>> {
@@ -348,14 +357,14 @@ impl Miner {
         }
     }
 
-    /// Whether this miner can run the job now; takes the device slot if so.
+    /// Whether this miner can run the job now; takes a device slot if so.
     fn check_job(
         &self,
         model: &str,
         revision: &str,
         profile: &str,
         required_context: u32,
-    ) -> Result<(Ready, OwnedSemaphorePermit), (RejectReason, String)> {
+    ) -> Result<(Ready, SlotGuard), (RejectReason, String)> {
         if self.draining.load(Ordering::SeqCst) {
             return Err((RejectReason::Draining, "miner is shutting down".into()));
         }
@@ -377,9 +386,12 @@ impl Miner {
                 format!("context {} < required {required_context}", ready.profile.context_tokens),
             ));
         }
-        let Ok(permit) = self.slot.clone().try_acquire_owned() else {
-            return Err((RejectReason::Busy, "device slot is busy".into()));
-        };
+        let slots = self.device_slots() as usize;
+        let taken = self.running.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < slots).then_some(n + 1));
+        if taken.is_err() {
+            return Err((RejectReason::Busy, "all device slots are busy".into()));
+        }
+        let permit = SlotGuard(self.running.clone());
         Ok((ready, permit))
     }
 
@@ -389,6 +401,15 @@ impl Miner {
             handle.abort();
             let _ = handle.await;
         }
+    }
+}
+
+/// Frees a device slot when the job finishes, fails or is aborted.
+struct SlotGuard(Arc<AtomicUsize>);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

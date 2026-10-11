@@ -65,6 +65,8 @@ enum Behavior {
     StreamAndHang,
     /// Fail every job the way a broken runtime does.
     FailRuntime,
+    /// Accept a job and never answer it.
+    Hang,
 }
 
 #[derive(Debug)]
@@ -118,6 +120,9 @@ async fn fake_miner(
     let welcome = stream.next().await.unwrap().unwrap();
     assert!(welcome.to_text().unwrap().contains("welcome"), "{welcome:?}");
 
+    // like the real miner: the smallest llama-server slot count among the loaded profiles
+    let slots =
+        models.iter().map(|(model, profile)| catalog.model(model).unwrap().profile(profile).unwrap().slots()).min();
     let loaded = models
         .iter()
         .map(|(model_id, profile)| {
@@ -132,7 +137,7 @@ async fn fake_miner(
         })
         .collect();
     sink.send(send(MinerMessage::Capacity {
-        devices: vec![DeviceSlots { id: "gpu0".into(), slots: 1 }],
+        devices: vec![DeviceSlots { id: "gpu0".into(), slots: slots.unwrap_or(1) }],
         models: loaded,
     }))
     .await
@@ -152,6 +157,7 @@ async fn fake_miner(
                     sink.send(send(MinerMessage::Accepted { attempt_id: attempt_id.clone() })).await.unwrap();
                     match behavior {
                         Behavior::DropAfterAccept => return,
+                        Behavior::Hang => {}
                         Behavior::FailRuntime => {
                             let message = "runtime returned HTTP 500: Compute error.".to_string();
                             let code = pool_protocol::messages::JobErrorCode::RuntimeFailed;
@@ -518,4 +524,23 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
         .unwrap();
     assert!(count_offload(current.clone()) > 0);
     assert!(has_h2o(&current));
+}
+
+#[tokio::test]
+async fn a_device_runs_as_many_jobs_at_once_as_its_profile_has_slots() {
+    let addr = start(config()).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "gpu", None, &[("h2o", "cuda-40960-x3")], Behavior::Hang, tx).await;
+    wait_ready(addr, "h2o", 1).await;
+    let request = |n: u32| json!({"model": "h2o", "state": format!("tokens:{n}"), "questions": {"q": {"type": "noul", "instructions": "x"}}});
+    let mut pending = Vec::new();
+    for _ in 0..4 {
+        let body = request(100);
+        pending.push(tokio::spawn(async move { post(addr, "/v1/systemone", &body).await.status() }));
+    }
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(jobs(&mut seen).len(), 3, "three slots take three jobs; the fourth waits");
+    for task in pending {
+        task.abort();
+    }
 }
