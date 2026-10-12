@@ -18,10 +18,13 @@ The catalog also ships a small chat model, `qwen2.5-1.5b-instruct`, for
 OpenAI-compatible `POST /v1/chat/completions`, with streaming, and **H2O**
 (`h2o`), the BF16 H2O-Lightning-4B decision model of
 [refactor-tool](https://github.com/hank-schrader/refactor-tool), also on
-`POST /v1/systemone`. H2O reads each question on its own and answers exactly
-like refactor-tool's local engine with its default policy `single`: same
-prompt, label-only forward pass, temperature 0.8 and yes/no commit rule, so
-`answers.<id>.noul` and `answers.<id>.probabilities` match the local numbers.
+`POST /v1/systemone`. H2O reads each question on its own and answers like
+refactor-tool's local engine with its default policy `single`: same prompt,
+label-only forward pass, temperature 0.8 and yes/no commit rule. Miners run
+llama-server with 2048-token prompt chunks and no RAM prompt cache, which
+answered 5% more questions (`docs/qualification/h2o-flags.md`), so
+`answers.<id>.noul` and `answers.<id>.probabilities` can differ from the local
+numbers in the last digits.
 Questions take 1-16 options; `usage.input_tokens` sums the prompts of all
 questions.
 

@@ -69,13 +69,15 @@ impl LaunchSpec {
                 let context = self.context_tokens.to_string();
                 args.extend(["-b".into(), context.clone(), "-ub".into(), context]);
             }
-            // refactor-tool's engine.rs flags for H2O; only the context, slots and -ngl vary
+            // refactor-tool's engine.rs flags for H2O, except 2048-token prompt chunks and
+            // no RAM prompt cache: 5% more questions answered (docs/qualification/h2o-flags.md).
+            // Only the context, slots and -ngl vary.
             Backend::LlamaServerH2o => args.extend(
                 [
                     "-b",
                     "2048",
                     "-ub",
-                    "512",
+                    "2048",
                     "-fa",
                     "on",
                     "-ctk",
@@ -84,7 +86,7 @@ impl LaunchSpec {
                     "f16",
                     "--no-context-shift",
                     "--cache-ram",
-                    "1024",
+                    "0",
                     "--ctx-checkpoints",
                     "8",
                 ]
@@ -300,17 +302,17 @@ mod tests {
     }
 
     #[test]
-    fn h2o_uses_refactor_tools_flags_with_two_reserved_tokens_per_slot() {
+    fn h2o_uses_pool_flags_with_two_reserved_tokens_per_slot() {
         let args = spec(Backend::LlamaServerH2o, 3).args(1, "key");
         assert_eq!(value(&args, "-c"), (40962 * 3).to_string());
         for (flag, expected) in [
             ("--parallel", "3"),
             ("-b", "2048"),
-            ("-ub", "512"),
+            ("-ub", "2048"),
             ("-fa", "on"),
             ("-ctk", "f16"),
             ("-ctv", "f16"),
-            ("--cache-ram", "1024"),
+            ("--cache-ram", "0"),
             ("--ctx-checkpoints", "8"),
         ] {
             assert_eq!(value(&args, flag), expected, "{flag}");
