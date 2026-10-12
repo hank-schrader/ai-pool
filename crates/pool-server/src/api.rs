@@ -4,7 +4,7 @@ use std::{collections::HashMap, convert::Infallible};
 
 use axum::{
     Json,
-    body::Bytes,
+    body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{
@@ -22,6 +22,9 @@ use crate::{
     error::ApiError,
     scheduler::{CountRequest, JobEvent, JobGuard, ModelAvailability, NewJob},
 };
+
+/// Upper bound for reading a request body.
+pub const MAX_BODY_BYTES: usize = 16 << 20;
 
 pub async fn healthz() -> &'static str {
     "ok"
@@ -103,19 +106,30 @@ pub async fn miner_catalog(
     Ok(Json(json!({ "catalog_revision": &**revision, "catalog": **catalog })))
 }
 
-pub async fn systemone(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+pub async fn systemone(State(state): State<AppState>, headers: HeaderMap, body: Body) -> Response {
     infer(state, headers, body, Operation::Systemone).await.unwrap_or_else(IntoResponse::into_response)
 }
 
-pub async fn chat_completions(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+pub async fn chat_completions(State(state): State<AppState>, headers: HeaderMap, body: Body) -> Response {
     infer(state, headers, body, Operation::ChatCompletions).await.unwrap_or_else(IntoResponse::into_response)
 }
 
-async fn infer(state: AppState, headers: HeaderMap, body: Bytes, operation: Operation) -> Result<Response, ApiError> {
+async fn infer(state: AppState, headers: HeaderMap, body: Body, operation: Operation) -> Result<Response, ApiError> {
     let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
     let tag = |error: ApiError| error.with_request_id(&request_id);
 
     let client = state.auth.client(&headers).map_err(tag)?;
+    // Refuse before reading, parsing or counting anything; the reservation is
+    // released when this function returns or is dropped, or moves into the job guard.
+    let reservation = state.scheduler.reserve(&client).map_err(tag)?;
+    // per-model limits are checked after parsing; this bounds the read itself
+    let body = axum::body::to_bytes(body, MAX_BODY_BYTES).await.map_err(|error| {
+        tag(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            format!("the request body could not be read (at most {MAX_BODY_BYTES} bytes): {error}"),
+        ))
+    })?;
     let fields: Map<String, Value> = serde_json::from_slice(&body).map_err(|error| {
         tag(ApiError::bad_request("invalid_request", format!("body must be a JSON object: {error}")))
     })?;
@@ -171,7 +185,7 @@ async fn infer(state: AppState, headers: HeaderMap, body: Bytes, operation: Oper
     };
     let buffer = if stream { state.config.stream_buffer_events } else { 1 };
     let mut events = state.scheduler.submit(job, buffer).await.map_err(tag)?;
-    let mut guard = JobGuard::new(state.scheduler.clone(), &request_id);
+    let mut guard = JobGuard::new(state.scheduler.clone(), &request_id, reservation);
 
     let mut headers = HeaderMap::new();
     headers.insert("x-request-id", header(&request_id));

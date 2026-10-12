@@ -11,7 +11,6 @@ use std::sync::{Arc, atomic::AtomicUsize};
 
 use axum::{
     Router,
-    extract::DefaultBodyLimit,
     routing::{get, post},
 };
 use pool_protocol::{Backend, Catalog};
@@ -72,8 +71,6 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/v1/status", get(api::admin_status))
         .route("/miner/v1/catalog", get(api::miner_catalog))
         .route("/miner/v1/connect", get(miners::connect))
-        // per-model limits are checked after parsing; this bounds the read itself
-        .layer(DefaultBodyLimit::max(16 << 20))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

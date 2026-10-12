@@ -187,7 +187,7 @@ The pool sizes its queues from the capacity it has. `POOL_QUEUE_CAPACITY_GLOBAL`
 from the connected, non-draining miners as 4 x their slots (per model: only miners
 serving that model), at least 16. Setting a number makes it a fixed operator cap.
 When a capacity is reached the server answers 503 `pool_overloaded` with
-`Retry-After`; a model nobody serves gets `no_miner_available`.
+`Retry-After` (the global queue is checked before the request body is read); a model nobody serves gets `no_miner_available`.
 
 `POOL_MAX_ACTIVE_PER_CLIENT` and `POOL_MAX_QUEUED_PER_CLIENT` are unset by default:
 no per-client limit. When set (positive), a client may have that many running and
@@ -195,6 +195,15 @@ waiting requests, and the active cap also holds back its queued jobs. Dispatch i
 strictly FIFO (oldest queued job first); without per-client limits one client that
 floods the queue is served ahead of later arrivals, so set the per-client caps if
 clients must be isolated from each other.
+
+When both per-client caps are set, a client may have at most their sum in the whole
+pipeline, including requests still being read, parsed or token-counted: the slot is
+reserved right after authentication and a request over the limit gets 429
+`rate_limit_exceeded` before its body is read. The slot is released when the response
+ends, the request fails or the client disconnects. `Retry-After` for 429 and
+`pool_overloaded` is `ceil(jobs ahead / completions per second)` over the last 60 s
+(the client's own completions for 429, the pool's for 503), clamped to 1..60 s;
+60 when nothing completed recently.
 
 ## Repository
 

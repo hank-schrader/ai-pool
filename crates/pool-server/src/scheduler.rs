@@ -8,7 +8,10 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -33,6 +36,126 @@ const MAX_RETRIES: u32 = 1;
 /// Rejections (e.g. a miner that was busy after all) before giving up.
 const MAX_REJECTIONS: u32 = 3;
 const MAX_PENDING_COUNTS: usize = 256;
+/// Completions older than this do not count towards the observed throughput.
+const RATE_WINDOW: Duration = Duration::from_secs(60);
+const MAX_RETRY_AFTER: u64 = 60;
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Admission state shared between the HTTP handlers and the scheduler, so a
+/// request can be refused before its body is read, parsed or counted.
+pub struct Admission {
+    /// `max_active + max_queued` per client; `None` means no per-client limit.
+    per_client: Option<usize>,
+    /// Requests per client anywhere in the pipeline (parsing, counting, queued, running).
+    inflight: Mutex<HashMap<String, usize>>,
+    /// Published by the scheduler after every command.
+    queue_len: AtomicUsize,
+    queue_capacity: AtomicUsize,
+    /// Recent job completions (any outcome), for Retry-After.
+    completions: Mutex<VecDeque<(Instant, String)>>,
+}
+
+/// One client's slot in the pipeline; released when dropped, on every exit path.
+pub struct Reservation {
+    admission: Arc<Admission>,
+    client: Option<String>,
+}
+
+impl Admission {
+    /// `per_client`: the most requests one client may have in the pipeline, if limited.
+    pub fn new(per_client: Option<usize>) -> Arc<Self> {
+        Arc::new(Self {
+            per_client,
+            inflight: Mutex::default(),
+            queue_len: AtomicUsize::new(0),
+            queue_capacity: AtomicUsize::new(usize::MAX),
+            completions: Mutex::default(),
+        })
+    }
+
+    /// Takes a slot for `client`, or fails with the error the request would get anyway.
+    pub fn reserve(self: &Arc<Self>, client: &str) -> Result<Reservation, ApiError> {
+        let (len, capacity) = (self.queue_len.load(Ordering::Relaxed), self.queue_capacity.load(Ordering::Relaxed));
+        if len >= capacity {
+            return Err(self.overloaded(len - capacity + 1));
+        }
+        let Some(limit) = self.per_client else {
+            return Ok(Reservation { admission: self.clone(), client: None });
+        };
+        let mut inflight = lock(&self.inflight);
+        let used = inflight.entry(client.into()).or_insert(0);
+        if *used >= limit {
+            let ahead = *used - limit + 1;
+            drop(inflight);
+            return Err(self.rate_limited(client, limit, ahead));
+        }
+        *used += 1;
+        Ok(Reservation { admission: self.clone(), client: Some(client.into()) })
+    }
+
+    pub fn overloaded(&self, ahead: usize) -> ApiError {
+        ApiError::overloaded("the pool queue is full").retry_after(retry_after(ahead, self.completed(None)))
+    }
+
+    pub fn rate_limited(&self, client: &str, limit: usize, ahead: usize) -> ApiError {
+        // a slot frees when one of the client's own jobs ends; fall back to the pool's rate
+        let own = self.completed(Some(client));
+        let done = if own > 0 { own } else { self.completed(None) };
+        ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_exceeded",
+            format!("at most {limit} requests may run or wait per client"),
+        )
+        .retry_after(retry_after(ahead, done))
+    }
+
+    fn record_completion(&self, client: &str) {
+        let now = Instant::now();
+        let mut completions = lock(&self.completions);
+        completions.push_back((now, client.into()));
+        Self::prune(&mut completions, now);
+    }
+
+    /// Completions within [`RATE_WINDOW`], by one client or by everyone.
+    fn completed(&self, client: Option<&str>) -> usize {
+        let mut completions = lock(&self.completions);
+        Self::prune(&mut completions, Instant::now());
+        completions.iter().filter(|(_, who)| client.is_none_or(|c| c == who)).count()
+    }
+
+    fn prune(completions: &mut VecDeque<(Instant, String)>, now: Instant) {
+        while completions.front().is_some_and(|(at, _)| now.duration_since(*at) > RATE_WINDOW) {
+            completions.pop_front();
+        }
+    }
+}
+
+/// Seconds until `ahead` jobs have probably finished, from the completions seen in
+/// the last [`RATE_WINDOW`]: ceil(ahead / (done / window)), clamped to [1, 60].
+/// Nothing completed recently means no usable rate, so the maximum.
+fn retry_after(ahead: usize, done: usize) -> u64 {
+    if done == 0 {
+        return MAX_RETRY_AFTER;
+    }
+    let seconds = (ahead as u64 * RATE_WINDOW.as_secs()).div_ceil(done as u64);
+    seconds.clamp(1, MAX_RETRY_AFTER)
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let Some(client) = self.client.take() else { return };
+        let mut inflight = lock(&self.admission.inflight);
+        if let Some(used) = inflight.get_mut(&client) {
+            *used -= 1;
+            if *used == 0 {
+                inflight.remove(&client);
+            }
+        }
+    }
+}
 
 pub enum JobEvent {
     /// Complete non-streaming response.
@@ -99,6 +222,7 @@ enum Command {
 #[derive(Clone)]
 pub struct SchedulerHandle {
     commands: mpsc::UnboundedSender<Command>,
+    admission: Arc<Admission>,
 }
 
 impl SchedulerHandle {
@@ -132,6 +256,11 @@ impl SchedulerHandle {
         self.send(Command::MinerGone { session: session.into() });
     }
 
+    /// Reserves the client's place in the pipeline; call before reading the body.
+    pub fn reserve(&self, client: &str) -> Result<Reservation, ApiError> {
+        self.admission.reserve(client)
+    }
+
     pub async fn count(&self, request: CountRequest) -> Result<u32, ApiError> {
         let (reply, response) = oneshot::channel();
         self.send(Command::Count { request, reply });
@@ -159,15 +288,17 @@ impl SchedulerHandle {
 
 /// Cancels its job when dropped before [`JobGuard::finish`], e.g. when the
 /// client disconnects and axum drops the handler or the response stream.
+/// It also owns the client's [`Reservation`] for as long as the response lives.
 pub struct JobGuard {
     handle: SchedulerHandle,
     job_id: String,
     finished: bool,
+    _reservation: Reservation,
 }
 
 impl JobGuard {
-    pub fn new(handle: SchedulerHandle, job_id: &str) -> Self {
-        Self { handle, job_id: job_id.into(), finished: false }
+    pub fn new(handle: SchedulerHandle, job_id: &str, reservation: Reservation) -> Self {
+        Self { handle, job_id: job_id.into(), finished: false, _reservation: reservation }
     }
 
     pub fn finish(&mut self) {
@@ -357,11 +488,18 @@ pub struct Scheduler {
     tally: Tally,
     counts: HashMap<String, PendingCount>,
     rotation: usize,
+    admission: Arc<Admission>,
 }
 
 pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
     let (commands, receiver) = mpsc::unbounded_channel();
+    let per_client = match (config.max_active_per_client, config.max_queued_per_client) {
+        (Some(active), Some(queued)) => Some(active + queued),
+        _ => None,
+    };
+    let admission = Admission::new(per_client);
     let scheduler = Scheduler {
+        admission: admission.clone(),
         config,
         catalog,
         miners: HashMap::new(),
@@ -372,7 +510,7 @@ pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
         rotation: 0,
     };
     tokio::spawn(scheduler.run(receiver));
-    SchedulerHandle { commands }
+    SchedulerHandle { commands, admission }
 }
 
 impl Scheduler {
@@ -387,7 +525,14 @@ impl Scheduler {
                 },
                 _ = tick.tick() => self.expire(Instant::now()),
             }
+            self.publish();
         }
+    }
+
+    /// Shows the queue fill to the handlers, which refuse early when it is full.
+    fn publish(&self) {
+        self.admission.queue_len.store(self.queue.len(), Ordering::Relaxed);
+        self.admission.queue_capacity.store(self.queue_capacities("").0, Ordering::Relaxed);
     }
 
     fn handle(&mut self, command: Command) {
@@ -457,20 +602,15 @@ impl Scheduler {
         }
         let (client_active, client_queued) = self.tally.client(&new.client);
         let client_jobs = client_active + client_queued;
-        if let (Some(active), Some(queued)) = (self.config.max_active_per_client, self.config.max_queued_per_client) {
-            if client_jobs >= active + queued {
-                return Err(ApiError::new(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_exceeded",
-                    format!("at most {} requests may run or wait per client", client_jobs),
-                )
-                .retry_after(1));
-            }
+        if let (Some(active), Some(queued)) = (self.config.max_active_per_client, self.config.max_queued_per_client)
+            && client_jobs >= active + queued
+        {
+            return Err(self.admission.rate_limited(&new.client, active + queued, 1));
         }
         let model_queued = self.tally.model_queued(&new.model);
         let (global_capacity, model_capacity) = self.queue_capacities(&new.model);
         if self.queue.len() >= global_capacity || model_queued >= model_capacity {
-            return Err(ApiError::overloaded("the pool queue is full"));
+            return Err(self.admission.overloaded(self.queue.len().saturating_sub(global_capacity) + 1));
         }
 
         let now = Instant::now();
@@ -875,6 +1015,7 @@ impl Scheduler {
     fn drop_job(&mut self, job_id: &str, error: Option<ApiError>) {
         let Some(job) = self.jobs.remove(job_id) else { return };
         self.tally.forget(&job);
+        self.admission.record_completion(&job.new.client);
         match &job.state {
             JobState::Queued => self.queue.retain(|id| id != job_id),
             JobState::Dispatched { session, attempt, .. } => {
@@ -1084,7 +1225,46 @@ fn completion_id(job: &Job) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::Tally;
+    use super::{Admission, Tally, retry_after};
+
+    #[test]
+    fn reservations_are_capped_per_client_and_released_on_drop() {
+        let admission = Admission::new(Some(2));
+        let first = admission.reserve("a").unwrap();
+        let _second = admission.reserve("a").unwrap();
+        assert_eq!(admission.reserve("a").err().unwrap().code, "rate_limit_exceeded");
+        // other clients are unaffected
+        let _other = admission.reserve("b").unwrap();
+        drop(first);
+        let _again = admission.reserve("a").unwrap();
+        assert!(admission.reserve("a").is_err());
+    }
+
+    #[test]
+    fn dropping_every_reservation_empties_the_table() {
+        let admission = Admission::new(Some(1));
+        drop(admission.reserve("a").unwrap());
+        assert!(admission.inflight.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unlimited_clients_are_never_refused_but_a_full_queue_is() {
+        let admission = Admission::new(None);
+        let held: Vec<_> = (0..100).map(|_| admission.reserve("a").unwrap()).collect();
+        assert_eq!(held.len(), 100);
+        admission.queue_capacity.store(4, std::sync::atomic::Ordering::Relaxed);
+        admission.queue_len.store(4, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(admission.reserve("a").err().unwrap().code, "pool_overloaded");
+    }
+
+    #[test]
+    fn retry_after_follows_throughput_and_is_clamped() {
+        assert_eq!(retry_after(1, 0), 60);
+        assert_eq!(retry_after(1, 600), 1);
+        assert_eq!(retry_after(1, 30), 2);
+        assert_eq!(retry_after(10, 60), 10);
+        assert_eq!(retry_after(500, 10), 60);
+    }
 
     #[test]
     fn tally_follows_a_job_and_drops_empty_entries() {

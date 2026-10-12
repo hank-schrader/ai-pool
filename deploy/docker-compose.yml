@@ -16,6 +16,8 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    # keeps a memory spike from taking down the other services on the host
+    mem_limit: ${POOL_MEMORY_LIMIT:-1g}
     ulimits:
       nofile:
         soft: 65536
