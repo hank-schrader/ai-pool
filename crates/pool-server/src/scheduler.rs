@@ -281,12 +281,80 @@ struct PendingCount {
     deadline: Instant,
 }
 
+/// Incremental job counts, so admission and dispatch never scan every job.
+/// `clients` maps a client to (dispatched, queued) jobs, `models` maps a model
+/// to its queued jobs; entries are removed when they reach zero.
+#[derive(Default)]
+struct Tally {
+    clients: HashMap<String, (usize, usize)>,
+    models: HashMap<String, usize>,
+}
+
+impl Tally {
+    fn client(&self, client: &str) -> (usize, usize) {
+        self.clients.get(client).copied().unwrap_or((0, 0))
+    }
+
+    fn model_queued(&self, model: &str) -> usize {
+        self.models.get(model).copied().unwrap_or(0)
+    }
+
+    /// A job entered the queue (admitted, or sent back to it).
+    fn enqueue(&mut self, client: &str, model: &str) {
+        self.clients.entry(client.to_owned()).or_default().1 += 1;
+        *self.models.entry(model.to_owned()).or_default() += 1;
+    }
+
+    /// A queued job left the queue without being tracked any further.
+    fn dequeue(&mut self, client: &str, model: &str) {
+        let entry = self.clients.get_mut(client).expect("client has a queued job");
+        entry.1 -= 1;
+        if *entry == (0, 0) {
+            self.clients.remove(client);
+        }
+        let queued = self.models.get_mut(model).expect("model has a queued job");
+        *queued -= 1;
+        if *queued == 0 {
+            self.models.remove(model);
+        }
+    }
+
+    /// A queued job was sent to a miner.
+    fn activate(&mut self, client: &str, model: &str) {
+        self.dequeue(client, model);
+        self.clients.entry(client.to_owned()).or_default().0 += 1;
+    }
+
+    /// A dispatched job went back to the queue.
+    fn deactivate(&mut self, client: &str, model: &str) {
+        self.release_active(client);
+        self.enqueue(client, model);
+    }
+
+    fn release_active(&mut self, client: &str) {
+        let entry = self.clients.get_mut(client).expect("client has an active job");
+        entry.0 -= 1;
+        if *entry == (0, 0) {
+            self.clients.remove(client);
+        }
+    }
+
+    /// A job is being removed from the scheduler in its current state.
+    fn forget(&mut self, job: &Job) {
+        match job.state {
+            JobState::Queued => self.dequeue(&job.new.client, &job.new.model),
+            JobState::Dispatched { .. } => self.release_active(&job.new.client),
+        }
+    }
+}
+
 pub struct Scheduler {
     config: Config,
     catalog: Arc<Catalog>,
     miners: HashMap<String, Miner>,
     jobs: HashMap<String, Job>,
     queue: VecDeque<String>,
+    tally: Tally,
     counts: HashMap<String, PendingCount>,
     rotation: usize,
 }
@@ -299,6 +367,7 @@ pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
         miners: HashMap::new(),
         jobs: HashMap::new(),
         queue: VecDeque::new(),
+        tally: Tally::default(),
         counts: HashMap::new(),
         rotation: 0,
     };
@@ -386,7 +455,8 @@ impl Scheduler {
             )
             .retry_after(30));
         }
-        let client_jobs = self.jobs.values().filter(|job| job.new.client == new.client).count();
+        let (client_active, client_queued) = self.tally.client(&new.client);
+        let client_jobs = client_active + client_queued;
         if let (Some(active), Some(queued)) = (self.config.max_active_per_client, self.config.max_queued_per_client) {
             if client_jobs >= active + queued {
                 return Err(ApiError::new(
@@ -397,7 +467,7 @@ impl Scheduler {
                 .retry_after(1));
             }
         }
-        let model_queued = self.queue.iter().filter(|id| self.jobs[*id].new.model == new.model).count();
+        let model_queued = self.tally.model_queued(&new.model);
         let (global_capacity, model_capacity) = self.queue_capacities(&new.model);
         if self.queue.len() >= global_capacity || model_queued >= model_capacity {
             return Err(ApiError::overloaded("the pool queue is full"));
@@ -405,6 +475,7 @@ impl Scheduler {
 
         let now = Instant::now();
         let id = new.id.clone();
+        self.tally.enqueue(&new.client, &new.model);
         self.jobs.insert(
             id.clone(),
             Job {
@@ -454,13 +525,7 @@ impl Scheduler {
         while index < self.queue.len() {
             let job_id = self.queue[index].clone();
             let job = &self.jobs[&job_id];
-            let client_active = self
-                .jobs
-                .values()
-                .filter(|other| {
-                    other.new.client == job.new.client && matches!(other.state, JobState::Dispatched { .. })
-                })
-                .count();
+            let client_active = self.tally.client(&job.new.client).0;
             if self.config.max_active_per_client.is_some_and(|max| client_active >= max) {
                 index += 1;
                 continue;
@@ -475,6 +540,7 @@ impl Scheduler {
                 None => index += 1,
             }
         }
+        self.debug_check();
     }
 
     /// Smallest fitting context first, then the least busy device, then round robin.
@@ -531,6 +597,7 @@ impl Scheduler {
         miner.attempts.insert(attempt.clone(), Attempt { job: Some(job_id.into()), device: device.into() });
         debug!(job = %job_id, %attempt, %session, %profile, "dispatched");
         job.attempts += 1;
+        self.tally.activate(&job.new.client, &job.new.model);
         job.state = JobState::Dispatched {
             session: session.into(),
             attempt,
@@ -637,6 +704,7 @@ impl Scheduler {
             MinerMessage::Result { attempt_id, body } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
                     let job = self.jobs.remove(&job_id).expect("released job exists");
+                    self.tally.forget(&job);
                     let profile = match &job.state {
                         JobState::Dispatched { profile, .. } => profile.clone(),
                         JobState::Queued => String::new(),
@@ -650,6 +718,7 @@ impl Scheduler {
             MinerMessage::StreamEnd { attempt_id, usage } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
                     let job = self.jobs.remove(&job_id).expect("released job exists");
+                    self.tally.forget(&job);
                     if job.new.request.include_usage
                         && let Some(usage) = usage
                     {
@@ -748,6 +817,7 @@ impl Scheduler {
         if retry {
             job.excluded.insert(session.into());
             job.state = JobState::Queued;
+            self.tally.deactivate(&job.new.client, &job.new.model);
             self.queue.push_front(job_id.into());
             return;
         }
@@ -776,6 +846,7 @@ impl Scheduler {
         let job = self.jobs.get_mut(job_id).expect("released job exists");
         job.excluded.insert(session.into());
         job.state = JobState::Queued;
+        self.tally.deactivate(&job.new.client, &job.new.model);
         self.queue.push_front(job_id.into());
     }
 
@@ -803,6 +874,7 @@ impl Scheduler {
     /// slot reserved until the miner confirms. `error` is sent to a waiting client.
     fn drop_job(&mut self, job_id: &str, error: Option<ApiError>) {
         let Some(job) = self.jobs.remove(job_id) else { return };
+        self.tally.forget(&job);
         match &job.state {
             JobState::Queued => self.queue.retain(|id| id != job_id),
             JobState::Dispatched { session, attempt, .. } => {
@@ -833,6 +905,7 @@ impl Scheduler {
                 let job = self.jobs.get_mut(&job_id).expect("checked above");
                 job.excluded.insert(session.into());
                 job.state = JobState::Queued;
+                self.tally.deactivate(&job.new.client, &job.new.model);
                 self.queue.push_front(job_id);
             } else {
                 self.fail(&job_id, ApiError::miner_failed(format!("{reason} during inference")));
@@ -917,6 +990,18 @@ impl Scheduler {
         self.pump();
     }
 
+    /// Debug-only: the counters must agree with the job table and the queue.
+    fn debug_check(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let (active, queued) = self.tally.clients.values().fold((0, 0), |a, c| (a.0 + c.0, a.1 + c.1));
+            debug_assert_eq!(queued, self.queue.len(), "queued counter drifted");
+            debug_assert_eq!(active + queued, self.jobs.len(), "job counter drifted");
+            debug_assert_eq!(self.tally.models.values().sum::<usize>(), queued, "model counter drifted");
+            debug_assert!(self.tally.clients.values().all(|c| *c != (0, 0)));
+        }
+    }
+
     fn snapshot(&self) -> Snapshot {
         let now = Instant::now();
         let mut models: HashMap<String, ModelAvailability> =
@@ -995,4 +1080,26 @@ fn shape_chunk(job: &Job, mut chunk: Value) -> Value {
 
 fn completion_id(job: &Job) -> String {
     format!("chatcmpl-{}", job.new.id.trim_start_matches("req_"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Tally;
+
+    #[test]
+    fn tally_follows_a_job_and_drops_empty_entries() {
+        let mut tally = Tally::default();
+        tally.enqueue("c", "m");
+        tally.enqueue("c", "m");
+        assert_eq!(tally.client("c"), (0, 2));
+        assert_eq!(tally.model_queued("m"), 2);
+        tally.activate("c", "m");
+        assert_eq!((tally.client("c"), tally.model_queued("m")), ((1, 1), 1));
+        tally.deactivate("c", "m");
+        assert_eq!((tally.client("c"), tally.model_queued("m")), ((0, 2), 2));
+        tally.activate("c", "m");
+        tally.release_active("c");
+        tally.dequeue("c", "m");
+        assert!(tally.clients.is_empty() && tally.models.is_empty());
+    }
 }

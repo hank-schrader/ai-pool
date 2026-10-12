@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use pool_protocol::Catalog;
 use pool_server::{AppState, config::Config, router};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Parser)]
 #[command(version, about = "ai-pool server: routes client requests to connected miners")]
@@ -59,6 +59,7 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    raise_open_files_limit();
     let state = AppState::new(config, catalog);
     let app = router(state.clone());
 
@@ -86,3 +87,30 @@ async fn main() -> ExitCode {
     }
     ExitCode::SUCCESS
 }
+
+/// Raises the soft open-files limit to the hard limit; many clients and miners
+/// each hold a socket. Failure is logged and ignored.
+#[cfg(unix)]
+fn raise_open_files_limit() {
+    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: `limit` is a valid, writable rlimit for the duration of the call.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        warn!("cannot read the open-files limit: {}", std::io::Error::last_os_error());
+        return;
+    }
+    let old = limit.rlim_cur;
+    if old >= limit.rlim_max {
+        info!(soft = old, hard = limit.rlim_max, "open-files limit already at its maximum");
+        return;
+    }
+    limit.rlim_cur = limit.rlim_max;
+    // SAFETY: `limit` is a valid rlimit; lowering nothing, only raising the soft value to the hard one.
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+        warn!("cannot raise the open-files limit from {old}: {}", std::io::Error::last_os_error());
+        return;
+    }
+    info!(old_soft = old, new_soft = limit.rlim_cur, "raised the open-files limit");
+}
+
+#[cfg(not(unix))]
+fn raise_open_files_limit() {}
