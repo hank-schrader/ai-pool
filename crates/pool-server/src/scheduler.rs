@@ -843,8 +843,7 @@ impl Scheduler {
             }
             MinerMessage::Result { attempt_id, body } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
-                    let job = self.jobs.remove(&job_id).expect("released job exists");
-                    self.tally.forget(&job);
+                    let job = self.remove_job(&job_id).expect("released job exists");
                     let profile = match &job.state {
                         JobState::Dispatched { profile, .. } => profile.clone(),
                         JobState::Queued => String::new(),
@@ -857,8 +856,7 @@ impl Scheduler {
             MinerMessage::StreamChunk { attempt_id, seq, chunk } => self.on_chunk(session, &attempt_id, seq, chunk),
             MinerMessage::StreamEnd { attempt_id, usage } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
-                    let job = self.jobs.remove(&job_id).expect("released job exists");
-                    self.tally.forget(&job);
+                    let job = self.remove_job(&job_id).expect("released job exists");
                     if job.new.request.include_usage
                         && let Some(usage) = usage
                     {
@@ -1010,12 +1008,19 @@ impl Scheduler {
         self.drop_job(job_id, Some(error));
     }
 
+    /// The single place a job leaves `self.jobs`: forgets its tally and counts it
+    /// towards the completion rate that drives Retry-After.
+    fn remove_job(&mut self, job_id: &str) -> Option<Job> {
+        let job = self.jobs.remove(job_id)?;
+        self.tally.forget(&job);
+        self.admission.record_completion(&job.new.client);
+        Some(job)
+    }
+
     /// Removes a job. A dispatched attempt is cancelled on its miner, keeping the
     /// slot reserved until the miner confirms. `error` is sent to a waiting client.
     fn drop_job(&mut self, job_id: &str, error: Option<ApiError>) {
-        let Some(job) = self.jobs.remove(job_id) else { return };
-        self.tally.forget(&job);
-        self.admission.record_completion(&job.new.client);
+        let Some(job) = self.remove_job(job_id) else { return };
         match &job.state {
             JobState::Queued => self.queue.retain(|id| id != job_id),
             JobState::Dispatched { session, attempt, .. } => {
