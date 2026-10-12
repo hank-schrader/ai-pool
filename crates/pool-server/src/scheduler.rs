@@ -387,17 +387,19 @@ impl Scheduler {
             .retry_after(30));
         }
         let client_jobs = self.jobs.values().filter(|job| job.new.client == new.client).count();
-        if client_jobs >= self.config.max_active_per_client + self.config.max_queued_per_client {
-            return Err(ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "rate_limit_exceeded",
-                format!("at most {} requests may run or wait per client", client_jobs),
-            )
-            .retry_after(1));
+        if let (Some(active), Some(queued)) = (self.config.max_active_per_client, self.config.max_queued_per_client) {
+            if client_jobs >= active + queued {
+                return Err(ApiError::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limit_exceeded",
+                    format!("at most {} requests may run or wait per client", client_jobs),
+                )
+                .retry_after(1));
+            }
         }
         let model_queued = self.queue.iter().filter(|id| self.jobs[*id].new.model == new.model).count();
-        if self.queue.len() >= self.config.queue_capacity_global || model_queued >= self.config.queue_capacity_per_model
-        {
+        let (global_capacity, model_capacity) = self.queue_capacities(&new.model);
+        if self.queue.len() >= global_capacity || model_queued >= model_capacity {
             return Err(ApiError::overloaded("the pool queue is full"));
         }
 
@@ -424,7 +426,28 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Queue capacities `(global, for the model)`: the fixed operator values, or
+    /// 4 x the slots of the connected, non-draining miners (at least 16).
+    fn queue_capacities(&self, model: &str) -> (usize, usize) {
+        let mut all = 0usize;
+        let mut serving = 0usize;
+        for miner in self.miners.values().filter(|miner| !miner.draining) {
+            all += miner.devices.iter().map(|d| d.slots as usize).sum::<usize>();
+            let mut devices: Vec<&str> =
+                miner.models.iter().filter(|m| m.model == model).map(|m| m.device.as_str()).collect();
+            devices.sort_unstable();
+            devices.dedup();
+            serving += devices.into_iter().map(|device| miner.slots(device) as usize).sum::<usize>();
+        }
+        (
+            self.config.queue_capacity_global.unwrap_or_else(|| (4 * all).max(16)),
+            self.config.queue_capacity_per_model.unwrap_or_else(|| (4 * serving).max(16)),
+        )
+    }
+
     /// Dispatches every queued job that has a fitting free slot, oldest first.
+    /// Queue order is strictly FIFO; without per-client limits a client that
+    /// queued earlier is served earlier, and there is no other fairness rule.
     /// A job that cannot be placed does not block smaller ones behind it.
     fn pump(&mut self) {
         let mut index = 0;
@@ -438,7 +461,7 @@ impl Scheduler {
                     other.new.client == job.new.client && matches!(other.state, JobState::Dispatched { .. })
                 })
                 .count();
-            if client_active >= self.config.max_active_per_client {
+            if self.config.max_active_per_client.is_some_and(|max| client_active >= max) {
                 index += 1;
                 continue;
             }

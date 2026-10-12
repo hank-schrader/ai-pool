@@ -18,6 +18,8 @@ docker compose up -d --build     # or load a prebuilt image: docker save ai-pool
 curl https://pool.example.com/readyz
 ```
 
+Queue limits: `POOL_QUEUE_CAPACITY_GLOBAL` / `POOL_QUEUE_CAPACITY_PER_MODEL` unset (the default) mean automatic, 4 x the slots of the connected miners (at least 16); a number is a fixed operator cap. `POOL_MAX_ACTIVE_PER_CLIENT` / `POOL_MAX_QUEUED_PER_CLIENT` unset mean no per-client limit; a number is a fixed cap. Dispatch is FIFO. See the main README.
+
 The server runs in `keys` mode: clients send `Authorization: Bearer <client key>`. Miners need a token from `POOL_MINER_TOKENS`, unless `POOL_MINER_AUTH=open` lets anyone connect:
 
 ```sh

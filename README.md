@@ -177,6 +177,22 @@ context into spare memory. Pin weight URLs to a repository revision, not `main`;
 the sha256 is checked on every download. Restart the server after editing the
 catalog.
 
+## Queue and client limits
+
+The pool sizes its queues from the capacity it has. `POOL_QUEUE_CAPACITY_GLOBAL` and
+`POOL_QUEUE_CAPACITY_PER_MODEL`, when unset, are automatic: computed at admission time
+from the connected, non-draining miners as 4 x their slots (per model: only miners
+serving that model), at least 16. Setting a number makes it a fixed operator cap.
+When a capacity is reached the server answers 503 `pool_overloaded` with
+`Retry-After`; a model nobody serves gets `no_miner_available`.
+
+`POOL_MAX_ACTIVE_PER_CLIENT` and `POOL_MAX_QUEUED_PER_CLIENT` are unset by default:
+no per-client limit. When set (positive), a client may have that many running and
+waiting requests, and the active cap also holds back its queued jobs. Dispatch is
+strictly FIFO (oldest queued job first); without per-client limits one client that
+floods the queue is served ahead of later arrivals, so set the per-client caps if
+clients must be isolated from each other.
+
 ## Repository
 
 | Path | |

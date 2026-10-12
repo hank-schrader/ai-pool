@@ -1,5 +1,6 @@
 //! Operational settings from `POOL_*` environment variables (optionally a `.env`
-//! file). Every setting has a default that works for a local pool; see
+//! file). Every setting has a default that works for a local pool (queue capacities
+//! and per-client limits are automatic or unlimited when unset); see
 //! `.env.example`.
 
 use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
@@ -36,10 +37,14 @@ pub struct Config {
     pub queue_timeout: Duration,
     pub dispatch_ack_timeout: Duration,
     pub first_chunk_timeout: Duration,
-    pub queue_capacity_global: usize,
-    pub queue_capacity_per_model: usize,
-    pub max_active_per_client: usize,
-    pub max_queued_per_client: usize,
+    /// `None` = automatic: 4 x the slots of all connected miners (at least 16).
+    pub queue_capacity_global: Option<usize>,
+    /// `None` = automatic: 4 x the slots of the miners serving the model (at least 16).
+    pub queue_capacity_per_model: Option<usize>,
+    /// `None` = no per-client limit.
+    pub max_active_per_client: Option<usize>,
+    /// `None` = no per-client limit.
+    pub max_queued_per_client: Option<usize>,
     pub heartbeat: Duration,
     pub stream_buffer_events: usize,
 }
@@ -70,10 +75,10 @@ impl Config {
             queue_timeout: seconds("POOL_QUEUE_TIMEOUT_SECONDS", 15)?,
             dispatch_ack_timeout: seconds("POOL_DISPATCH_ACK_TIMEOUT_SECONDS", 5)?,
             first_chunk_timeout: seconds("POOL_FIRST_CHUNK_TIMEOUT_SECONDS", 60)?,
-            queue_capacity_global: parse("POOL_QUEUE_CAPACITY_GLOBAL", "64")?,
-            queue_capacity_per_model: parse("POOL_QUEUE_CAPACITY_PER_MODEL", "32")?,
-            max_active_per_client: parse("POOL_MAX_ACTIVE_PER_CLIENT", "2")?,
-            max_queued_per_client: parse("POOL_MAX_QUEUED_PER_CLIENT", "8")?,
+            queue_capacity_global: optional("POOL_QUEUE_CAPACITY_GLOBAL")?,
+            queue_capacity_per_model: optional("POOL_QUEUE_CAPACITY_PER_MODEL")?,
+            max_active_per_client: optional("POOL_MAX_ACTIVE_PER_CLIENT")?,
+            max_queued_per_client: optional("POOL_MAX_QUEUED_PER_CLIENT")?,
             heartbeat: seconds("POOL_HEARTBEAT_SECONDS", 10)?,
             stream_buffer_events: parse("POOL_STREAM_BUFFER_EVENTS", "512")?,
         };
@@ -96,8 +101,17 @@ impl Config {
                     .into())
             }
             _ if self.max_miners == 0 => Err("POOL_MAX_MINERS must be positive".into()),
-            _ if self.max_active_per_client == 0 || self.queue_capacity_global == 0 => {
-                Err("POOL_MAX_ACTIVE_PER_CLIENT and POOL_QUEUE_CAPACITY_GLOBAL must be positive".into())
+            _ if [
+                self.max_active_per_client,
+                self.max_queued_per_client,
+                self.queue_capacity_global,
+                self.queue_capacity_per_model,
+            ]
+            .contains(&Some(0)) =>
+            {
+                Err("POOL_MAX_ACTIVE_PER_CLIENT, POOL_MAX_QUEUED_PER_CLIENT, POOL_QUEUE_CAPACITY_GLOBAL and \
+                     POOL_QUEUE_CAPACITY_PER_MODEL must be positive when set"
+                    .into())
             }
             _ if self.queue_timeout >= self.request_timeout => {
                 Err("POOL_QUEUE_TIMEOUT_SECONDS must be shorter than POOL_REQUEST_TIMEOUT_SECONDS".into())
@@ -120,6 +134,11 @@ fn list(name: &str) -> Vec<String> {
 fn parse<T: FromStr>(name: &str, default: &str) -> Result<T, String> {
     let value = var(name).unwrap_or_else(|| default.into());
     value.parse().map_err(|_| format!("{name}={value:?} is not valid"))
+}
+
+/// A setting that is automatic (or unlimited) when unset or empty.
+fn optional<T: FromStr>(name: &str) -> Result<Option<T>, String> {
+    var(name).map(|value| value.parse().map_err(|_| format!("{name}={value:?} is not valid"))).transpose()
 }
 
 fn seconds(name: &str, default: u64) -> Result<Duration, String> {
