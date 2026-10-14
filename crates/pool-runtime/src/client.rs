@@ -38,6 +38,16 @@ pub struct LocalClient {
     http: reqwest::Client,
     base: String,
     api_key: String,
+    #[cfg(test)]
+    fake: Option<tokio::sync::mpsc::UnboundedSender<FakeRequest>>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct FakeRequest {
+    pub path: String,
+    pub body: Vec<u8>,
+    pub reply: tokio::sync::oneshot::Sender<Result<Value, RuntimeError>>,
 }
 
 impl LocalClient {
@@ -47,7 +57,20 @@ impl LocalClient {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .expect("loopback HTTP client builds");
-        Self { http, base, api_key }
+        Self {
+            http,
+            base,
+            api_key,
+            #[cfg(test)]
+            fake: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fake(sender: tokio::sync::mpsc::UnboundedSender<FakeRequest>) -> Self {
+        let mut client = Self::new("http://fake-runtime".into(), "test".into());
+        client.fake = Some(sender);
+        client
     }
 
     pub fn base_url(&self) -> &str {
@@ -84,12 +107,25 @@ impl LocalClient {
     }
 
     pub async fn post_json(&self, path: &str, payload: &Value) -> Result<Value, RuntimeError> {
+        #[cfg(test)]
+        if self.fake.is_some() {
+            return self
+                .post_bytes(path, serde_json::to_vec(payload).map_err(|error| RuntimeError::failed(error.to_string()))?)
+                .await;
+        }
         let response = check_status(self.send(path, payload).await?).await?;
         response.json().await.map_err(|error| RuntimeError::failed(format!("invalid runtime response: {error}")))
     }
 
     /// Posts an already serialized JSON body (for requests too large to build as a `Value`).
     pub async fn post_bytes(&self, path: &str, body: Vec<u8>) -> Result<Value, RuntimeError> {
+        #[cfg(test)]
+        if let Some(fake) = &self.fake {
+            let (reply, response) = tokio::sync::oneshot::channel();
+            fake.send(FakeRequest { path: path.into(), body, reply })
+                .map_err(|_| RuntimeError::failed("fake server stopped"))?;
+            return response.await.map_err(|_| RuntimeError::failed("fake server dropped the response"))?;
+        }
         let response = self
             .http
             .post(format!("{}{}", self.base, path))

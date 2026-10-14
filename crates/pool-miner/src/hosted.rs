@@ -170,7 +170,7 @@ impl Hosted {
                 match server {
                     Ok(mut server) => {
                         let probed = tokio::select! {
-                            probed = probe(server.client(), hosted.model.backend, profile.context_tokens) => probed,
+                            probed = probe(server.client(), hosted.model.backend, profile.context_tokens, profile.slots()) => probed,
                             _ = shutdown.cancelled() => {
                                 server.stop();
                                 let _ = tokio::time::timeout(Duration::from_secs(10), server.wait_exit()).await;
@@ -264,7 +264,7 @@ impl Hosted {
 /// Runs one request that fills most of the context, so the whole working set
 /// is really allocated and used once before the profile is advertised. H2O first
 /// verifies its label tokens and returns the engine the jobs will use.
-async fn probe(client: &LocalClient, backend: Backend, context: u32) -> Result<Option<H2o>, String> {
+async fn probe(client: &LocalClient, backend: Backend, context: u32, slots: u32) -> Result<Option<H2o>, String> {
     // leaves room for the prompt template and the question around the filler
     let words = (context as usize * 85 / 100).saturating_sub(200);
     let filler = "please ".repeat(words);
@@ -282,7 +282,7 @@ async fn probe(client: &LocalClient, backend: Backend, context: u32) -> Result<O
                 .await
                 .map(|_| None),
             Backend::LlamaServerH2o => {
-                let h2o = H2o::start(client.clone(), context).await?;
+                let h2o = H2o::start(client.clone(), context, slots).await?;
                 h2o.answer(&json!({
                     "state": filler,
                     "questions": {"probe": {"type": "noul", "instructions": "Is this text repetitive?"}}

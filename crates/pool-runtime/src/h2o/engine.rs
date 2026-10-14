@@ -1,10 +1,15 @@
 //! Label verification, tokenization and the answer-slot forward pass, ported
 //! from refactor-tool's `lightning.rs`, `lightning_transport.rs` and the
 //! `single` policy of `ensemble/`. Constants and arithmetic are the original's.
-use std::{collections::HashSet, fmt::Write, sync::Arc};
+use std::{
+    collections::{HashSet, VecDeque},
+    fmt::Write,
+    sync::{Arc, Mutex},
+};
 
 use pool_protocol::messages::JobErrorCode;
 use serde_json::{Map, Value, json};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::prompt::{self, LABELS};
 use crate::{LocalClient, RuntimeError};
@@ -25,6 +30,40 @@ pub struct H2o {
     /// Largest accepted prompt, in tokens (inclusive). The server's per-slot
     /// context is two tokens larger, as in refactor-tool's engine.
     token_limit: u32,
+    slots: Arc<Slots>,
+}
+
+struct Slots {
+    available: Mutex<VecDeque<u32>>,
+    permits: Arc<Semaphore>,
+}
+
+struct Slot {
+    id: u32,
+    pool: Arc<Slots>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Slots {
+    fn new(count: u32) -> Arc<Self> {
+        Arc::new(Self {
+            available: Mutex::new((0..count).collect()),
+            permits: Arc::new(Semaphore::new(count as usize)),
+        })
+    }
+
+    async fn acquire(self: &Arc<Self>) -> Slot {
+        let permit = self.permits.clone().acquire_owned().await.expect("H2O slot pool stays open");
+        let id = self.available.lock().unwrap().pop_front().expect("a permit owns an available slot");
+        Slot { id, pool: self.clone(), _permit: permit }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        // Return the id before the permit wakes another request.
+        self.pool.available.lock().unwrap().push_back(self.id);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -43,8 +82,11 @@ struct Prepared {
 impl H2o {
     /// Checks that appending a space and each label A-P to the answer prompt adds
     /// exactly one distinct token, and keeps those token ids.
-    pub async fn start(client: LocalClient, token_limit: u32) -> Result<Self, RuntimeError> {
-        let mut engine = Self { client, labels: Arc::from(Vec::new()), token_limit };
+    pub async fn start(client: LocalClient, token_limit: u32, slots: u32) -> Result<Self, RuntimeError> {
+        if slots == 0 {
+            return Err(failed("H2O needs at least one llama-server slot"));
+        }
+        let mut engine = Self { client, labels: Arc::from(Vec::new()), token_limit, slots: Slots::new(slots) };
         let probe = prompt::probe();
         let base = engine.tokenize(&probe).await?;
         let mut seen = HashSet::new();
@@ -124,10 +166,11 @@ impl H2o {
     /// `usage.input_tokens` is the sum of the tokens the server evaluated.
     pub async fn answer(&self, payload: &Value) -> Result<Value, RuntimeError> {
         let prepared = self.prepare(payload, true).await?;
+        let slot = self.slots.acquire().await;
         let mut answers = Map::new();
         let mut input_tokens = 0usize;
         for question in prepared {
-            let (probabilities, evaluated) = self.forward(&question.tokens, question.names.len()).await?;
+            let (probabilities, evaluated) = self.forward(&question.tokens, question.names.len(), slot.id).await?;
             input_tokens += evaluated;
             let answer = match question.kind {
                 Kind::Noul => json!({"noul": commit_noul(probabilities[0])}),
@@ -144,9 +187,9 @@ impl H2o {
 
     /// One label-only completion at the answer slot. Returns the probabilities
     /// of the first `options` labels and the prompt tokens the server evaluated.
-    async fn forward(&self, tokens: &[u32], options: usize) -> Result<(Vec<f64>, usize), RuntimeError> {
+    async fn forward(&self, tokens: &[u32], options: usize, slot: u32) -> Result<(Vec<f64>, usize), RuntimeError> {
         let ids = &self.labels[..options];
-        let result = self.client.post_bytes("/completion", completion_body(tokens, ids)).await?;
+        let result = self.client.post_bytes("/completion", completion_body(tokens, ids, slot)).await?;
         let evaluated = result["tokens_evaluated"].as_u64();
         if evaluated != Some(tokens.len() as u64) || result["truncated"].as_bool() != Some(false) {
             return Err(failed("H2O completion changed or truncated the verified prompt"));
@@ -184,7 +227,7 @@ const LABEL_BIAS: f64 = 64.0;
 
 /// The body sent to `/completion`: the prompt tokens and the label bias, with
 /// refactor-tool's sampling settings. Built as text; the prompt can be 40,000 tokens.
-pub(super) fn completion_body(tokens: &[u32], labels: &[u32]) -> Vec<u8> {
+pub(super) fn completion_body(tokens: &[u32], labels: &[u32], slot: u32) -> Vec<u8> {
     let mut body = String::with_capacity(tokens.len() * 7 + 512);
     body.push_str("{\"prompt\":[");
     for (i, id) in tokens.iter().enumerate() {
@@ -202,7 +245,7 @@ pub(super) fn completion_body(tokens: &[u32], labels: &[u32]) -> Vec<u8> {
     }
     let _ = write!(
         body,
-        "],\"n_predict\":1,\"n_probs\":{},\"samplers\":[],\"post_sampling_probs\":true,\"cache_prompt\":true,\
+        "],\"id_slot\":{slot},\"n_predict\":1,\"n_probs\":{},\"samplers\":[],\"post_sampling_probs\":true,\"cache_prompt\":true,\
          \"stream\":false,\"temperature\":1.0,\"backend_sampling\":false,\"mirostat\":0,\"seed\":0,\
          \"response_fields\":[\"completion_probabilities\",\"tokens_evaluated\",\"truncated\"]}}",
         labels.len()
