@@ -408,6 +408,8 @@ impl Miner {
             ));
         }
         let slots = self.device_slots() as usize;
+        // Rust 1.99 deprecates fetch_update for try_update, which older toolchains lack.
+        #[allow(deprecated)]
         let taken = self.running.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < slots).then_some(n + 1));
         if taken.is_err() {
             return Err((RejectReason::Busy, "all device slots are busy".into()));

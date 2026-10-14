@@ -52,6 +52,8 @@ struct ConnectionSlot(Arc<AtomicUsize>);
 
 impl ConnectionSlot {
     fn take(counter: &Arc<AtomicUsize>, max: usize) -> Option<Self> {
+        // Rust 1.99 deprecates fetch_update for try_update, which older toolchains lack.
+        #[allow(deprecated)]
         counter
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |open| (open < max).then_some(open + 1))
             .ok()
