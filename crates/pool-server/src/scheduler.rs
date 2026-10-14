@@ -441,6 +441,7 @@ struct Tally {
     clients: HashMap<String, (usize, usize)>,
     models: HashMap<String, usize>,
     queued_questions: u64,
+    answering_questions: u64,
 }
 
 impl Tally {
@@ -477,16 +478,18 @@ impl Tally {
     /// A queued job was sent to a miner.
     fn activate(&mut self, client: &str, model: &str, questions: u64) {
         self.dequeue(client, model, questions);
+        self.answering_questions += questions;
         self.clients.entry(client.to_owned()).or_default().0 += 1;
     }
 
     /// A dispatched job went back to the queue.
     fn deactivate(&mut self, client: &str, model: &str, questions: u64) {
-        self.release_active(client);
+        self.release_active(client, questions);
         self.enqueue(client, model, questions);
     }
 
-    fn release_active(&mut self, client: &str) {
+    fn release_active(&mut self, client: &str, questions: u64) {
+        self.answering_questions -= questions;
         let entry = self.clients.get_mut(client).expect("client has an active job");
         entry.0 -= 1;
         if *entry == (0, 0) {
@@ -498,7 +501,7 @@ impl Tally {
     fn forget(&mut self, job: &Job) {
         match job.state {
             JobState::Queued => self.dequeue(&job.new.client, &job.new.model, job.new.request.question_count),
-            JobState::Dispatched { .. } => self.release_active(&job.new.client),
+            JobState::Dispatched { .. } => self.release_active(&job.new.client, job.new.request.question_count),
         }
     }
 }
@@ -525,7 +528,7 @@ pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
     };
     let admission = Admission::new(per_client);
     let stats = Stats::new(Instant::now(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default());
-    let (public_stats, stats_receiver) = watch::channel(stats.snapshot(0, 0));
+    let (public_stats, stats_receiver) = watch::channel(stats.snapshot(0, 0, 0));
     let scheduler = Scheduler {
         stats,
         public_stats,
@@ -560,8 +563,13 @@ impl Scheduler {
     }
 
     /// Shows the queue fill to the handlers, which refuse early when it is full.
-    fn publish(&self) {
-        self.public_stats.send_replace(self.stats.snapshot(self.tally.queued_questions, self.connected_miners()));
+    fn publish(&mut self) {
+        self.stats.observe_queue(self.tally.queued_questions);
+        self.public_stats.send_replace(self.stats.snapshot(
+            self.tally.queued_questions,
+            self.connected_miners(),
+            self.tally.answering_questions,
+        ));
         self.admission.queue_len.store(self.queue.len(), Ordering::Relaxed);
         self.admission.queue_capacity.store(self.queue_capacities("").0, Ordering::Relaxed);
     }
@@ -571,7 +579,7 @@ impl Scheduler {
     }
 
     fn advance_stats(&mut self, now: Instant) {
-        self.stats.advance(now, self.tally.queued_questions, self.connected_miners());
+        self.stats.advance(now, self.tally.queued_questions, self.connected_miners(), self.tally.answering_questions);
     }
 
     fn handle(&mut self, command: Command) {
@@ -877,7 +885,7 @@ impl Scheduler {
                     };
                     let body = shape_response(&job, body);
                     if job.events.try_send(JobEvent::Result { body, profile }).is_ok() {
-                        self.stats.answered(job.new.request.question_count);
+                        self.stats.answered(job.new.request.question_count, job.new.input_tokens);
                     }
                 }
             }
@@ -896,7 +904,7 @@ impl Scheduler {
                         let _ = job.events.try_send(JobEvent::Chunk(chunk));
                     }
                     if job.events.try_send(JobEvent::End).is_ok() {
-                        self.stats.answered(job.new.request.question_count);
+                        self.stats.answered(job.new.request.question_count, job.new.input_tokens);
                     }
                 }
             }
@@ -1183,6 +1191,15 @@ impl Scheduler {
                     .sum::<u64>(),
                 "queued question counter drifted"
             );
+            debug_assert_eq!(
+                self.tally.answering_questions,
+                self.jobs
+                    .values()
+                    .filter(|job| matches!(job.state, JobState::Dispatched { .. }))
+                    .map(|job| job.new.request.question_count)
+                    .sum::<u64>(),
+                "answering question counter drifted"
+            );
             debug_assert_eq!(active + queued, self.jobs.len(), "job counter drifted");
             debug_assert_eq!(self.tally.models.values().sum::<usize>(), queued, "model counter drifted");
             debug_assert!(self.tally.clients.values().all(|c| *c != (0, 0)));
@@ -1304,7 +1321,7 @@ mod tests {
         config.queue_capacity_global = None;
         config.queue_capacity_per_model = None;
         let stats = Stats::new(Instant::now(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default());
-        let (public_stats, _) = watch::channel(stats.snapshot(0, 0));
+        let (public_stats, _) = watch::channel(stats.snapshot(0, 0, 0));
         Scheduler {
             stats,
             public_stats,
@@ -1411,6 +1428,9 @@ mod tests {
             scheduler.expire(Instant::now() + scheduler.config.queue_timeout + Duration::from_millis(1));
             assert!(matches!(receiver.try_recv().unwrap(), JobEvent::Failed(error) if error.code == "queue_timeout"));
             assert!(scheduler.jobs.is_empty());
+            scheduler.debug_check();
+            assert_eq!(scheduler.tally.answering_questions, 0);
+            assert_eq!(scheduler.stats.snapshot(0, 0, 0).average_prompt_tokens, None);
             scheduler.miners.clear();
             let (events, _receiver) = mpsc::channel(1);
             assert_eq!(
@@ -1526,19 +1546,102 @@ mod tests {
         tally.enqueue("c", "m", 3);
         tally.enqueue("c", "m", 3);
         assert_eq!(tally.queued_questions, 6);
+        assert_eq!(tally.answering_questions, 0);
         assert_eq!(tally.client("c"), (0, 2));
         assert_eq!(tally.model_queued("m"), 2);
         tally.activate("c", "m", 3);
         assert_eq!(tally.queued_questions, 3);
+        assert_eq!(tally.answering_questions, 3);
         assert_eq!((tally.client("c"), tally.model_queued("m")), ((1, 1), 1));
         tally.deactivate("c", "m", 3);
         assert_eq!(tally.queued_questions, 6);
+        assert_eq!(tally.answering_questions, 0);
         assert_eq!((tally.client("c"), tally.model_queued("m")), ((0, 2), 2));
         tally.activate("c", "m", 3);
-        tally.release_active("c");
+        tally.release_active("c", 3);
         tally.dequeue("c", "m", 3);
         assert_eq!(tally.queued_questions, 0);
+        assert_eq!(tally.answering_questions, 0);
         assert!(tally.clients.is_empty() && tally.models.is_empty());
+    }
+
+    #[test]
+    fn immediately_dispatched_questions_do_not_raise_waiting_peaks() {
+        let mut scheduler = scheduler();
+        let now = Instant::now();
+        scheduler.stats = Stats::new(now, Duration::from_secs(120));
+        let _miner = miner(&mut scheduler, "miner", "cuda-4096");
+        scheduler.advance_stats(now + Duration::from_secs(60));
+        scheduler.publish();
+        let (events, _receiver) = mpsc::channel(1);
+        let mut new = job(&scheduler, "active", 1234, None);
+        new.request.question_count = 4;
+        scheduler.admit(new, events).unwrap();
+        scheduler.pump();
+        scheduler.debug_check();
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().queued_questions, 0);
+        assert_eq!(scheduler.public_stats.borrow().answering_questions, 4);
+        scheduler.advance_stats(now + Duration::from_secs(61));
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().live.last().unwrap().queued, 0);
+        assert_eq!(scheduler.public_stats.borrow().live.last().unwrap().answering, 4);
+        scheduler.drop_job("active", None);
+        scheduler.debug_check();
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().answering_questions, 0);
+        assert_eq!(scheduler.public_stats.borrow().average_prompt_tokens, None);
+        scheduler.advance_stats(now + Duration::from_secs(120));
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().history.queued, [0]);
+    }
+
+    #[test]
+    fn questions_left_waiting_after_dispatch_keep_their_bucket_peak() {
+        let mut scheduler = scheduler();
+        let now = Instant::now();
+        scheduler.stats = Stats::new(now, Duration::from_secs(120));
+        let mut outbound = miner(&mut scheduler, "miner", "cuda-4096");
+        scheduler.advance_stats(now + Duration::from_secs(60));
+        let (events, _receiver) = mpsc::channel(2);
+        scheduler.admit(job(&scheduler, "busy", 100, None), events.clone()).unwrap();
+        scheduler.pump();
+        scheduler.publish();
+        let PoolMessage::Job { attempt_id, .. } = outbound.try_recv().unwrap() else { panic!("expected active job") };
+        let mut waiting = job(&scheduler, "waiting", 100, None);
+        waiting.request.question_count = 4;
+        scheduler.admit(waiting, events).unwrap();
+        scheduler.pump();
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().queued_questions, 4);
+        // The occupied slot frees later in the same second; the next dispatch pass clears the queue.
+        scheduler.advance_stats(now + Duration::from_millis(60_200));
+        scheduler.drop_job("busy", None);
+        scheduler.on_miner_message("miner", MinerMessage::Cancelled { attempt_id });
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().queued_questions, 0);
+        assert_eq!(scheduler.public_stats.borrow().answering_questions, 4);
+        scheduler.advance_stats(now + Duration::from_secs(61));
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().live.last().unwrap().queued, 4);
+        scheduler.advance_stats(now + Duration::from_secs(62));
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().live.last().unwrap().queued, 0);
+        scheduler.advance_stats(now + Duration::from_secs(120));
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().history.queued, [4]);
+        scheduler.advance_stats(now + Duration::from_secs(180));
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().history.queued, [4, 0]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "answering question counter drifted")]
+    fn debug_check_detects_answering_question_drift() {
+        let mut scheduler = scheduler();
+        scheduler.tally.answering_questions = 1;
+        scheduler.debug_check();
     }
 
     #[test]
@@ -1593,16 +1696,18 @@ mod tests {
                 message: "failed".into(),
             },
         );
-        assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, 0.0);
+        assert_eq!(scheduler.stats.snapshot(0, 0, 0).answered_per_second, 0.0);
         let PoolMessage::Job { attempt_id, .. } = second.try_recv().unwrap() else { panic!("expected retry") };
         let result = MinerMessage::Result { attempt_id, body: json!({"answers": {}}) };
         scheduler.on_miner_message("second", result.clone());
         scheduler.on_miner_message("second", result);
-        assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, 3.0 / 60.0);
+        assert_eq!(scheduler.stats.snapshot(0, 0, 0).answered_per_second, 3.0 / 60.0);
         scheduler.advance_stats(now + Duration::from_secs(120));
-        let snapshot = scheduler.stats.snapshot(0, 0);
+        let snapshot = scheduler.stats.snapshot(0, 0, 0);
         assert_eq!(snapshot.answered_last_24h, 3);
         assert_eq!(snapshot.history.answered, [3]);
+        assert_eq!(snapshot.history.requests, [1]);
+        assert_eq!(snapshot.history.prompt_tokens, [100]);
     }
 
     #[test]
@@ -1660,7 +1765,10 @@ mod tests {
             scheduler.on_miner_message("miner", terminal);
             let delivered = !closed && !full && !include_usage;
             assert!(scheduler.jobs.is_empty());
-            assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, u64::from(delivered) as f64 / 60.0);
+            scheduler.debug_check();
+            assert_eq!(scheduler.tally.answering_questions, 0);
+            assert_eq!(scheduler.stats.snapshot(0, 0, 0).average_prompt_tokens, delivered.then_some(100.0));
+            assert_eq!(scheduler.stats.snapshot(0, 0, 0).answered_per_second, u64::from(delivered) as f64 / 60.0);
             if let Some(mut receiver) = receiver {
                 let event = receiver.try_recv().unwrap();
                 if delivered {
@@ -1671,7 +1779,10 @@ mod tests {
                 assert!(matches!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Disconnected)));
             }
             scheduler.advance_stats(now + Duration::from_secs(120));
-            assert_eq!(scheduler.stats.snapshot(0, 0).answered_last_24h, u64::from(delivered));
+            let snapshot = scheduler.stats.snapshot(0, 0, 0);
+            assert_eq!(snapshot.answered_last_24h, u64::from(delivered));
+            assert_eq!(snapshot.history.requests, [u64::from(delivered)]);
+            assert_eq!(snapshot.history.prompt_tokens, [u64::from(delivered) * 100]);
         }
     }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseRest, parseSnapshot, parseTick, type Snapshot, type Tick } from './protocol';
-import { applyTick, historicalSeries, liveSeries, replaceSnapshot, niceScale, tickFormatter } from './stats';
+import { applyTick, historicalSeries, liveSeries, replaceSnapshot, niceScale, tickFormatter, promptAverage, promptSeries, sparkPath, sparkDots } from './stats';
 import { snapshot, t } from './fixtures';
 function tick(state: Snapshot, answered = 4): Tick {
   return { version: 1, epoch: state.epoch, seq: state.seq + 1, updated_at: t(Date.parse(state.updated_at) / 1000 + 1), totals: state.totals,
@@ -82,7 +82,7 @@ describe('series and provisional minutes', () => {
     expect(historicalSeries(s, 60).at(-1)).toMatchObject({ provisional: true, v: 1, incomplete: false });
     const next = tick(s, 1); next.minute = { t: t(180), answered: 60, queued: 0, miners: 1 };
     const rolled = applyTick(s, next).state!;
-    expect(historicalSeries(rolled, 60).at(-1)).toEqual({ t: 180000, v: 1 });
+    expect(historicalSeries(rolled, 60).at(-1)).toMatchObject({ t: 180000, v: 1, queued: 0, miners: 1 });
     const current = applyTick(rolled, tick(rolled, 2)).state!;
     expect(historicalSeries(current, 60).at(-1)).toMatchObject({ t: 240000, v: 2, seconds: 1 });
   });
@@ -99,5 +99,72 @@ describe('axis tick precision', () => {
     expect(tickFormatter(10, 'en-US').format(30)).toBe('30');
     expect(tickFormatter(0.025, 'en-US').format(0.075)).toBe('0.075');
     expect(tickFormatter(niceScale(0.09).step, 'en-US').format(0.075)).toBe('0.075');
+  });
+});
+
+describe('additive v1 workload metrics', () => {
+  function workload() {
+    const s = snapshot();
+    s.totals = { ...s.totals, answering_questions: 4, average_prompt_tokens: 1500 };
+    s.live = [{ ...s.live[0], answering: 4, requests: 2, prompt_tokens: 3000 }];
+    s.history = { ...s.history, answering: [4], requests: [2], prompt_tokens: [3000] };
+    return s;
+  }
+  it('parses extended and legacy v1 snapshots and REST responses', () => {
+    const s = workload();
+    expect(parseSnapshot(s)).toEqual(s);
+    expect(parseRest({ ...s, ...s.totals })).toEqual(s);
+    expect(parseSnapshot(snapshot())).not.toBeNull();
+    expect(parseSnapshot({ ...s, totals: { ...s.totals, average_prompt_tokens: null } })).not.toBeNull();
+    const next = { ...tick(s), second: { ...s.live[0], t: s.updated_at }, minute: null };
+    expect(parseTick(next)).toEqual(next);
+  });
+  it('rejects invalid added counts, averages and parallel arrays', () => {
+    const s = workload();
+    for (const bad of [
+      { ...s, totals: { ...s.totals, answering_questions: -1 } },
+      { ...s, totals: { ...s.totals, average_prompt_tokens: Infinity } },
+      { ...s, totals: { ...s.totals, average_prompt_tokens: -1 } },
+      { ...s, live: [{ ...s.live[0], requests: 0 }] },
+      { ...s, live: [{ ...s.live[0], answering: 0.5 }] },
+      { ...s, live: [{ ...s.live[0], prompt_tokens: undefined }] },
+      { ...s, history: { ...s.history, answering: [] } },
+      { ...s, history: { ...s.history, requests: [0] } },
+      { ...s, history: { ...s.history, prompt_tokens: [-1] } },
+      { ...s, history: { ...s.history, requests: undefined } },
+    ]) expect(parseSnapshot(bad)).toBeNull();
+  });
+  it('computes per-request averages, with empty buckets as gaps instead of zero', () => {
+    expect(promptAverage(2, 3000)).toBe(1500);
+    expect(promptAverage(4, 3000)).toBe(750);
+    expect(promptAverage(1, 0)).toBe(0);
+    expect(promptAverage(0, 0)).toBeNull();
+    expect(promptAverage(undefined, undefined)).toBeNull();
+    const s = workload();
+    s.history = { ...s.history, answered: [7, 0, 3], queued: [1, 0, 0], miners: [2, 2, 2],
+      answering: [4, 0, 0], requests: [2, 0, 1], prompt_tokens: [3000, 0, 9000] };
+    expect(promptSeries(s)).toEqual([1500, null, 9000]);
+    expect(sparkPath([2, null, 4])).toBe('M0,21M140,4');
+    expect(sparkPath([2, 4, null, 2, 4])).toBe('M0,21L35,4M105,21L140,4');
+    expect(sparkPath([null, undefined])).toBe('');
+    expect(sparkDots([2, null, 4])).toEqual([{ i: 0, x: 0, y: 21 }, { i: 2, x: 140, y: 4 }]);
+    expect(sparkDots([2, 4, null])).toEqual([]);
+    expect(sparkDots([null, 0, null])).toEqual([{ i: 1, x: 70, y: 38 }]);
+    expect(sparkPath([0, 0])).toBe('M0,38L140,38');
+  });
+  it('keeps added metrics through ticks and authoritative minute replacement', () => {
+    const s = workload(); s.updated_at = t(239); s.live[0].t = t(238);
+    const next = { ...tick(s), second: { ...s.live[0], t: t(239), requests: 1, prompt_tokens: 9000 },
+      minute: { t: t(180), answered: 3, queued: 7, answering: 2, miners: 2, requests: 3, prompt_tokens: 12000 } };
+    const rolled = applyTick(s, next).state!;
+    expect(rolled.history.answering).toEqual([4, 2]);
+    expect(rolled.history.requests).toEqual([2, 3]);
+    expect(rolled.history.prompt_tokens).toEqual([3000, 12000]);
+    expect(historicalSeries(rolled, 60).at(-1)).toMatchObject({ queued: 7, answering: 2, requests: 3, prompt_tokens: 12000 });
+    expect(promptSeries(rolled)).toEqual([1500, 4000]);
+    expect(liveSeries(rolled).at(-1)).toMatchObject({ requests: 1, prompt_tokens: 9000, answering: 4 });
+    const soFar = historicalSeries(s, 60).at(-1)!;
+    expect(soFar).toMatchObject({ provisional: true, queued: 3, requests: 2, prompt_tokens: 3000 });
+    expect(promptAverage(soFar.requests, soFar.prompt_tokens)).toBe(1500);
   });
 });

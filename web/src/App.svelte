@@ -50,5 +50,5 @@
       {#if table}<HistoryTable {points} isLive={range === 0} />{/if}
     </figure>
   </div>
-  <footer>Totals across all miners and models. Live updates every second; history covers the last 24 hours and restarts with the pool. Offline data refreshes every 10 seconds.</footer>
+  <footer>Totals across all miners and models. Live updates every second; history covers the last 24 hours and restarts with the pool. Offline data refreshes every 10 seconds. For h2o, prompt size is the longest single-question prompt per request.</footer>
 </main>

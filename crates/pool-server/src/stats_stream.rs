@@ -29,6 +29,8 @@ static EPOCH: LazyLock<String> = LazyLock::new(|| Uuid::new_v4().to_string());
 pub struct Totals {
     pub miners: usize,
     pub queued_questions: u64,
+    pub answering_questions: u64,
+    pub average_prompt_tokens: Option<f64>,
     pub answered_last_24h: u64,
     pub answered_per_second: f64,
 }
@@ -86,6 +88,8 @@ impl PublishedStats {
             totals: Totals {
                 miners: stats.miners,
                 queued_questions: stats.queued_questions,
+                answering_questions: stats.answering_questions,
+                average_prompt_tokens: stats.average_prompt_tokens,
                 answered_last_24h: stats.answered_last_24h,
                 answered_per_second: stats.answered_per_second,
             },
@@ -107,6 +111,9 @@ impl PublishedStats {
                     answered: history.answered[i],
                     queued: history.queued[i],
                     miners: history.miners[i],
+                    answering: history.answering[i],
+                    requests: history.requests[i],
+                    prompt_tokens: history.prompt_tokens[i],
                 }
             });
             Some(

@@ -28,10 +28,22 @@ fn snapshot(second: i64) -> StatsSnapshot {
         updated_at: timestamp(second),
         miners: 2,
         queued_questions: 3,
+        answering_questions: 4,
+        average_prompt_tokens: Some(100.0),
         answered_per_second: 0.5,
         answered_last_24h: 60,
         live: Arc::new(
-            (180..second).map(|s| StatsPoint { t: timestamp(s), answered: 1, queued: 3, miners: 2 }).collect(),
+            (180..second)
+                .map(|s| StatsPoint {
+                    t: timestamp(s),
+                    answered: 1,
+                    queued: 3,
+                    miners: 2,
+                    answering: 4,
+                    requests: 1,
+                    prompt_tokens: 100,
+                })
+                .collect(),
         ),
         history: Arc::new(History {
             interval_seconds: 60,
@@ -39,6 +51,9 @@ fn snapshot(second: i64) -> StatsSnapshot {
             answered: vec![60],
             queued: vec![3],
             miners: vec![2],
+            answering: vec![4],
+            requests: vec![60],
+            prompt_tokens: vec![6000],
         }),
     }
 }
@@ -74,12 +89,17 @@ async fn snapshots_ticks_reconnects_lag_and_skipped_seconds_are_consistent() {
     assert!(uuid::Uuid::parse_str(initial["epoch"].as_str().unwrap()).is_ok());
     assert_eq!(initial["seq"], 0);
     assert_eq!(initial["totals"]["miners"], 2);
+    assert_eq!(initial["totals"]["answering_questions"], 4);
+    assert_eq!(initial["totals"]["average_prompt_tokens"], 100.0);
     assert_eq!(initial["live"][0]["t"], timestamp(180));
     publish(&sender, 182).await;
     let (name, tick) = event(&mut body).await;
     assert_eq!(name, "tick");
     assert_eq!(tick["seq"], 1);
     assert_eq!(tick["second"]["t"], timestamp(181));
+    assert_eq!(tick["second"]["answering"], 4);
+    assert_eq!(tick["second"]["requests"], 1);
+    assert_eq!(tick["second"]["prompt_tokens"], 100);
     assert_eq!(tick["minute"], Value::Null);
     assert_eq!(tick["epoch"], initial["epoch"]);
     let mut reconnect = publisher.response().into_body().into_data_stream();
@@ -142,6 +162,9 @@ async fn completed_minute_and_rest_are_from_the_same_shared_frame() {
         answered: vec![60, 60],
         queued: vec![3, 4],
         miners: vec![2, 1],
+        answering: vec![4, 5],
+        requests: vec![60, 60],
+        prompt_tokens: vec![6000, 6000],
     });
     sender.send_replace(complete);
     tokio::time::advance(Duration::from_secs(1)).await;
@@ -150,6 +173,9 @@ async fn completed_minute_and_rest_are_from_the_same_shared_frame() {
     assert_eq!(name, "tick");
     assert_eq!(tick["minute"]["t"], timestamp(180));
     assert_eq!(tick["minute"]["answered"], 60);
+    assert_eq!(tick["minute"]["answering"], 5);
+    assert_eq!(tick["minute"]["requests"], 60);
+    assert_eq!(tick["minute"]["prompt_tokens"], 6000);
     let frame = publisher.latest();
     let rest: Value = serde_json::from_str(&frame.rest_json).unwrap();
     let full: Value = serde_json::from_str(&frame.snapshot_json).unwrap();
@@ -157,6 +183,8 @@ async fn completed_minute_and_rest_are_from_the_same_shared_frame() {
     assert_eq!(rest["epoch"], tick["epoch"]);
     assert_eq!(rest["history"], full["history"]);
     assert_eq!(rest["miners"], tick["totals"]["miners"]);
+    assert_eq!(rest["answering_questions"], tick["totals"]["answering_questions"]);
+    assert_eq!(rest["average_prompt_tokens"], tick["totals"]["average_prompt_tokens"]);
     assert_eq!(full["live"].as_array().unwrap().last().unwrap(), &tick["second"]);
 }
 

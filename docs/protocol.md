@@ -84,7 +84,12 @@ default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img
 
 `GET /v1/stats` sends `Cache-Control: public, max-age=5`, reading the latest
 shared publication. Its existing top-level totals/history remain compatible;
-`version`, `epoch`, `seq`, and `live` are added:
+`version`, `epoch`, `seq`, and `live` identify the publication. The workload
+metrics `answering_questions` and `average_prompt_tokens`, and point/history
+`answering`, `requests`, `prompt_tokens` are additive version 1 fields. Readers
+should ignore unknown fields; older version 1 payloads may omit these metrics,
+which the page displays as unavailable rather than zero. No per-question data
+is published:
 
 ```json
 {
@@ -94,17 +99,22 @@ shared publication. Its existing top-level totals/history remain compatible;
   "updated_at": "2026-10-14T12:02:05Z",
   "miners": 2,
   "queued_questions": 3,
+  "answering_questions": 4,
+  "average_prompt_tokens": 1500,
   "answered_per_second": 0.5,
   "answered_last_24h": 90,
   "live": [
-    {"t": "2026-10-14T12:02:04Z", "answered": 1, "queued": 3, "miners": 2}
+    {"t": "2026-10-14T12:02:04Z", "answered": 1, "queued": 3, "miners": 2, "answering": 4, "requests": 1, "prompt_tokens": 1500}
   ],
   "history": {
     "interval_seconds": 60,
     "end": "2026-10-14T12:01:00Z",
     "answered": [60, 30],
     "queued": [0, 3],
-    "miners": [2, 2]
+    "miners": [2, 2],
+    "answering": [4, 4],
+    "requests": [20, 10],
+    "prompt_tokens": [30000, 15000]
   }
 }
 ```
@@ -112,7 +122,10 @@ shared publication. Its existing top-level totals/history remain compatible;
 `miners` counts connected, non-draining sessions, including sessions without
 loaded models. `queued_questions` sums questions in jobs waiting for dispatch,
 including retries waiting again; parsing, token counting and active jobs are
-excluded. A systemone job contributes its `questions` entry count; a chat
+excluded. `answering_questions` sums the questions in dispatched/active jobs,
+including attempts awaiting miner acknowledgement; it drops on completion,
+cancellation, failure or requeue. Both totals are current values at publication,
+not peaks. A systemone job contributes its `questions` entry count; a chat
 completion contributes one. A successful job counts once regardless of retries,
 only after the terminal success event reaches the client channel. Streams count
 only when their final end event is enqueued.
@@ -123,13 +136,42 @@ second is excluded; its answers still contribute to the rolling rate. History
 contains completed UTC minutes, oldest first, capped at 1,440 entries. The startup
 minute is excluded, including its answers, even when startup aligns to a minute.
 `answered` counts that bucket's successful answers; full-minute counts equal the
-sum of their second buckets. `queued` and `miners` sample closing boundary state
-(last known state during catch-up). `history.end` names the start of the newest
+sum of their second buckets. Live `queued` is the **peak number of questions left waiting after a dispatch
+pass during that second**; history `queued` is the **peak during that minute**.
+Peaks are observed once per actor turn after dispatch, and at the next turn's
+start. A job admitted and dispatched in the same turn never waited for a miner
+and does not raise the peak. A job left waiting after dispatch raises the peak,
+which persists for that bucket even if a later pass dispatches it within the same
+second. Peaks reset independently at second/minute boundaries.
+`miners` and `answering` sample closing boundary state (last known state during
+catch-up). During catch-up, earlier bursts belong to their original buckets;
+subsequent idle buckets carry the last known waiting count. `history.end` names the start of the newest
 completed minute; arrays are empty until the first full minute closes.
 `answered_last_24h` sums completed history buckets only. Bucket intervals are
 half-open `[t, t + interval)` (1 second / 60 seconds). Timing uses monotonic
 elapsed time anchored to UTC at startup. Catch-up work is bounded by retained
 history capacity. All history is in memory and resets on restart.
+
+`requests` counts successfully delivered requests in the bucket; a multi-question
+request contributes one request and multiple `answered` questions. `prompt_tokens`
+sums each delivered request's existing pre-submit `input_tokens` once. Full-minute
+request/token sums equal the sums of their seconds. Retries, failures and terminal
+events that cannot be enqueued in the client channel contribute nothing.
+`average_prompt_tokens` is rolling 60-second `prompt_tokens / requests`, using
+the same window as `answered_per_second`, and is **null** with no answered requests.
+Zero-token requests yield a genuine zero average, distinct from an empty window.
+Partial startup buckets still contribute to rolling totals but are excluded from
+the corresponding completed histories.
+
+**Prompt-size interpretation:** for multi-question h2o systemone, `input_tokens`
+is the maximum token count among the separately rendered question prompts. Each
+prompt includes the shared state, that question's instructions and options, and
+the system/ChatML/assistant answer template. It is not the sum across questions,
+and does not use the response's `usage.input_tokens` (which sums evaluated
+question prompts). Thus the displayed average is the mean of the longest
+single-question prompt per answered h2o request. Other backends use their existing
+pre-submit exact input counter. The page labels the aggregate **Average prompt
+size**, **per request, last 60 s**, and explains the h2o convention.
 
 ### Statistics SSE, version 1
 
@@ -147,18 +189,20 @@ Event names are `snapshot` and `tick`, each containing one JSON object. Shared
 fields are `version` (integer, 1), `epoch` (UUID string identifying the server
 process), `seq` (non-negative integer, incremented once per shared publication),
 `updated_at` (RFC3339 UTC), and `totals` containing non-negative integer
-`miners`, `queued_questions`, `answered_last_24h` and finite, non-negative
-`answered_per_second`. `snapshot` adds `live` and `history` with the shapes above.
+`miners`, `queued_questions`, `answering_questions`, `answered_last_24h`, finite,
+non-negative `answered_per_second`, and `average_prompt_tokens` (finite,
+non-negative number or null). `snapshot` adds `live` and `history` with the shapes above.
 `tick` adds `second` (one completed-second point) and `minute` (one completed-minute
 point or null). Both points have `t` (RFC3339 UTC bucket start) and non-negative
-integer `answered`, `queued`, `miners`.
+integer `answered`, `queued`, `miners`, `answering`, `requests`, `prompt_tokens`.
+History has parallel arrays for all six metrics.
 
 ```text
 event: snapshot
-data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":0,"updated_at":"2026-10-14T12:02:05Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5},"live":[{"t":"2026-10-14T12:02:04Z","answered":1,"queued":3,"miners":2}],"history":{"interval_seconds":60,"end":"2026-10-14T12:01:00Z","answered":[60,30],"queued":[0,3],"miners":[2,2]}}
+data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":0,"updated_at":"2026-10-14T12:02:05Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5,"answering_questions":4,"average_prompt_tokens":1500},"live":[{"t":"2026-10-14T12:02:04Z","answered":1,"queued":3,"miners":2,"answering":4,"requests":1,"prompt_tokens":1500}],"history":{"interval_seconds":60,"end":"2026-10-14T12:01:00Z","answered":[60,30],"queued":[0,3],"miners":[2,2],"answering":[4,4],"requests":[20,10],"prompt_tokens":[30000,15000]}}
 
 event: tick
-data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":1,"updated_at":"2026-10-14T12:02:06Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5},"second":{"t":"2026-10-14T12:02:05Z","answered":0,"queued":3,"miners":2},"minute":null}
+data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":1,"updated_at":"2026-10-14T12:02:06Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5,"answering_questions":4,"average_prompt_tokens":1500},"second":{"t":"2026-10-14T12:02:05Z","answered":0,"queued":3,"miners":2,"answering":4,"requests":0,"prompt_tokens":0},"minute":null}
 
 ```
 
@@ -175,7 +219,14 @@ provisional current-minute average: questions so far divided by completed second
 observed. Tooltip/table label it **so far**, mark incomplete startup coverage,
 and replace it with the authoritative completed minute. At rollover the
 provisional point is absent until one current-minute second has completed.
-The hero remains the **60-second average**. On stream errors or gaps, the page
+The hero remains the **60-second average**. Four tiles show connected miners,
+questions being answered, questions waiting for a miner (current value, with a
+per-minute peak sparkline), and average prompt size. Prompt sparklines use
+per-minute request-weighted averages and have gaps where no requests completed.
+Counts/token values use thousands separators. Tiles fit four across on wide
+screens, two across on medium screens, and one column on mobile. The table adds
+miners, answering questions, waiting peaks, answered requests, prompt-token sums,
+and prompt tokens per request, including provisional current-minute metrics. On stream errors or gaps, the page
 closes the stream, immediately polls `/v1/stats`, then polls every 10 seconds,
 retaining data with an Offline icon and label. SSE retry uses exponential,
 jittered backoff capped at 60 seconds, resetting after 30 seconds of healthy

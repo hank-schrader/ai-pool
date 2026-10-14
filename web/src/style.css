@@ -27,7 +27,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--text-primary);
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1040px; margin: 0 auto; padding: 32px 24px 48px; }
+main { max-width: 1280px; margin: 0 auto; padding: 32px 24px 48px; }
 header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
 .brand { font-weight: 650; font-size: 18px; letter-spacing: -0.01em; }
 .brand span { color: var(--text-secondary); font-weight: 400; }
@@ -41,11 +41,15 @@ header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-
 .label { font-size: 13px; color: var(--text-secondary); }
 .hero .value { font-size: 64px; font-weight: 600; line-height: 1.05; letter-spacing: -0.02em; margin: 6px 0 4px; }
 .hero .sub { font-size: 13px; color: var(--text-muted); }
-.kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 28px; }
-.tile { padding: 18px 20px; display: grid; grid-template-columns: 1fr 140px; align-items: end; gap: 12px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
+.tile { container: metric-tile / inline-size; }
+.tile-content { padding: 18px 20px; display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 12px; }
+@container metric-tile (min-width: 380px) {
+  .tile-content { grid-template-columns: minmax(0, 1fr) 140px; }
+}
 .tile .value { font-size: 32px; font-weight: 600; line-height: 1.1; margin-top: 4px; }
 .tile .note { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.tile svg { width: 140px; height: 40px; overflow: visible; }
+.tile svg { justify-self: end; width: 140px; height: 40px; overflow: visible; }
 .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; padding: 2px; background: var(--surface-1); }
 .seg button { font: inherit; font-size: 13px; color: var(--text-secondary); background: none; border: 0;
@@ -76,6 +80,9 @@ th { color: var(--text-secondary); font-weight: 600; }
 .tablewrap { max-height: 320px; overflow: auto; }
 footer { margin-top: 20px; font-size: 12px; color: var(--text-muted); }
 .stale { opacity: 0.55; transition: opacity .2s; }
+@media (max-width: 1200px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 640px) {
   .kpis { grid-template-columns: 1fr; }
   .hero .value { font-size: 52px; }
