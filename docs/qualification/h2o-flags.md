@@ -30,3 +30,19 @@ Date: 2026-10-14. With `--cache-ram 0`, a prefetched job usually took a request'
 | one slot per request | 0.57 | 2.81 | 10,791 | 18.6 s / 43.4 s | 16,802 MiB |
 
 No errors in either run. Requests with a single question behave as before; the gain grows with the number of questions per record.
+
+## No context checkpoints
+
+Date: 2026-10-14. h2o is a hybrid model (`qwen35`: gated delta net layers plus attention). For such models llama-server ends every prompt with a separate 4-token decode and copies the recurrent state into a context checkpoint, so a later prompt that shares a prefix can restore it. The pool's client sends one question per request, so on live miners only 1-3% of prompt tokens came from a checkpoint.
+
+Local RTX 5070 Ti 16 GB with a Ryzen 9 9950X, runtime b11374, `cuda-40960-x4`. A load generator sent the engine's own `/completion` body (label bias, `n_probs`, one pinned slot per worker, 4 workers) with one question per request: 40% of prompts 250-700 tokens, 60% 900-3,300, about 1,470 on average, behind a shared system prompt. 75 s per run after a 10 s warm-up:
+
+| flags | questions/s | prompt tokens/s |
+|---|---|---|
+| `--ctx-checkpoints 8` (two runs) | 3.98 / 3.95 | 5,866 / 5,844 |
+| `--ctx-checkpoints 0` (two runs) | 4.29 / 4.35 | 6,289 / 6,340 |
+
+- 9% more questions answered. With checkpoints off the server reaches 93-94% of the card's prompt-processing ceiling (`llama-bench` pp1450: 6,743 tokens/s; `llama-batched-bench` with 2-8 prompts in parallel: 6,700-7,500).
+- The same 30 prompts answered one at a time: label probabilities differ by at most 0.0055 (mean 0.0013), no top answer changed; `cuda-40960-x3` and `x4` differ by as much with checkpoints on. Repeated runs with the same flags are identical.
+- The cost: a request's later questions can no longer restore its record from a checkpoint, so requests with several questions on a long record lose most of the one-slot-per-request gain above. Turn checkpoints back on if clients start sending several questions per request.
+- Not worth changing, measured on the same card: `-b`/`-ub` from 512 to 4096 (within 3%), more slots (`x3` vs `x4`: 1%), `--kv-unified` (equal or slower). llama-server's probability readout sorts all 248,320 tokens for every question (13 ms on the 9950X); skipping it would add about 4% and needs a llama.cpp change.

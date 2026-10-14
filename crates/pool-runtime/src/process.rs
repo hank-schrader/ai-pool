@@ -69,8 +69,9 @@ impl LaunchSpec {
                 let context = self.context_tokens.to_string();
                 args.extend(["-b".into(), context.clone(), "-ub".into(), context]);
             }
-            // refactor-tool's engine.rs flags for H2O, except 2048-token prompt chunks and
-            // no RAM prompt cache: 5% more questions answered (docs/qualification/h2o-flags.md).
+            // refactor-tool's engine.rs flags for H2O, except 2048-token prompt chunks, no RAM
+            // prompt cache (5% more questions answered) and no context checkpoints (9% more
+            // with one question per request; see docs/qualification/h2o-flags.md).
             // Only the context, slots and -ngl vary.
             Backend::LlamaServerH2o => args.extend(
                 [
@@ -88,7 +89,7 @@ impl LaunchSpec {
                     "--cache-ram",
                     "0",
                     "--ctx-checkpoints",
-                    "8",
+                    "0",
                 ]
                 .map(String::from),
             ),
@@ -314,7 +315,7 @@ mod tests {
             ("-ctk", "f16"),
             ("-ctv", "f16"),
             ("--cache-ram", "0"),
-            ("--ctx-checkpoints", "8"),
+            ("--ctx-checkpoints", "0"),
         ] {
             assert_eq!(value(&args, flag), expected, "{flag}");
         }
