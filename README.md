@@ -1,8 +1,8 @@
 # ai-pool miner
 
 A miner serves ai-pool's models from your GPU. It connects out to the pool over
-HTTPS, so it needs no open ports. The public pool is
-`https://pool.example.com` and the model in demand is `h2o`.
+HTTPS, so it needs no open ports. The examples use `https://pool.example.com`;
+replace it with the address of the pool you join. They serve `h2o`.
 
 ## Requirements
 
