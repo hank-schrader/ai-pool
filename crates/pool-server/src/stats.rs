@@ -96,11 +96,14 @@ impl Stats {
             self.minute = minute - HISTORY_MINUTES as u64;
         }
         while self.minute < minute {
-            if self.minutes.len() == HISTORY_MINUTES {
-                self.history_answered -= self.minutes.pop_front().expect("history is full").answered;
+            // The startup minute cannot provide a full-minute rate.
+            if self.minute > self.unix_start.as_secs() / 60 {
+                if self.minutes.len() == HISTORY_MINUTES {
+                    self.history_answered -= self.minutes.pop_front().expect("history is full").answered;
+                }
+                self.history_answered += self.minute_answered;
+                self.minutes.push_back(Minute { answered: self.minute_answered, queued, miners });
             }
-            self.history_answered += self.minute_answered;
-            self.minutes.push_back(Minute { answered: self.minute_answered, queued, miners });
             self.minute_answered = 0;
             self.minute += 1;
         }
@@ -182,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_minutes_sample_queue_and_miners_at_the_boundary() {
+    fn history_skips_startup_minute_and_samples_full_minutes_at_the_boundary() {
         let now = Instant::now();
         let mut stats = Stats::new(now, Duration::from_millis(150_500));
         stats.answered(3);
@@ -194,27 +197,37 @@ mod tests {
         stats.answered(4);
         let snapshot = stats.snapshot(8, 3);
         assert_eq!(snapshot.history.end, "1970-01-01T00:02:00Z");
-        assert_eq!(snapshot.history.answered, [3]);
-        assert_eq!(snapshot.history.queued, [5]);
-        assert_eq!(snapshot.history.miners, [1]);
-        assert_eq!(snapshot.answered_last_24h, 3);
+        assert!(snapshot.history.answered.is_empty());
+        assert!(snapshot.history.queued.is_empty());
+        assert!(snapshot.history.miners.is_empty());
+        assert_eq!(snapshot.answered_last_24h, 0);
+        assert_eq!(snapshot.answered_per_second, 7.0 / 60.0);
         assert_eq!(snapshot.queued_questions, 8);
         assert_eq!(snapshot.miners, 3);
         stats.advance(now + Duration::from_millis(89_500), 9, 4);
         let snapshot = stats.snapshot(9, 4);
-        assert_eq!(snapshot.history.answered, [3, 4]);
-        assert_eq!(snapshot.history.queued, [5, 9]);
-        assert_eq!(snapshot.history.miners, [1, 4]);
-        assert_eq!(snapshot.answered_last_24h, 7);
+        assert_eq!(snapshot.history.end, "1970-01-01T00:03:00Z");
+        assert_eq!(snapshot.history.answered, [4]);
+        assert_eq!(snapshot.history.queued, [9]);
+        assert_eq!(snapshot.history.miners, [4]);
+        assert_eq!(snapshot.answered_last_24h, 4);
+        stats.answered(6);
+        stats.advance(now + Duration::from_millis(149_500), 2, 1);
+        let snapshot = stats.snapshot(2, 1);
+        assert_eq!(snapshot.history.answered, [4, 6]);
+        assert_eq!(snapshot.history.queued, [9, 2]);
+        assert_eq!(snapshot.history.miners, [4, 1]);
+        assert_eq!(snapshot.answered_last_24h, 10);
     }
 
     #[test]
     fn history_is_oldest_first_and_capped_at_1440_minutes() {
         let now = Instant::now();
         let mut stats = Stats::new(now, Duration::from_secs(120));
+        stats.advance(now + Duration::from_secs(60), 0, 0);
         for minute in 0..1441 {
             stats.answered(minute + 1);
-            stats.advance(now + Duration::from_secs((minute + 1) * 60), minute, minute as usize);
+            stats.advance(now + Duration::from_secs((minute + 2) * 60), minute, minute as usize);
         }
         let snapshot = stats.snapshot(0, 0);
         assert_eq!(snapshot.history.answered.len(), HISTORY_MINUTES);

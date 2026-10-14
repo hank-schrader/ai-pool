@@ -70,7 +70,8 @@ A job is retried **once**, on a different miner, if its miner disconnects, fails
 ## Public status page and totals
 
 `GET /` serves the pool's live status page, and `GET /v1/stats` returns its JSON
-data. Both are public, including in `keys` mode; existing client, miner and admin
+data. Both are unauthenticated, as are the existing `GET /healthz` and
+`GET /readyz`, including in `keys` mode; existing client, miner and admin
 routes keep their authentication requirements. The page uses no external
 resources, refreshes every 10 seconds, and retains its last data with an Offline
 indicator if a refresh fails. Its content security policy permits its inline
@@ -101,17 +102,20 @@ loaded models. `queued_questions` sums questions in jobs waiting for dispatch,
 including retries waiting again; parsing, token counting and active jobs are
 excluded. A systemone job contributes the number of entries in its `questions`
 object; a chat completion contributes one. Only successful job completions count,
-once per job regardless of retries. Streams count on successful completion.
+once per job regardless of retries, after its terminal success event is enqueued
+in the client channel. Streams count only if their final end event is enqueued.
 
 `answered_per_second` is questions answered in the rolling 60-second window
-divided by 60, using second buckets. History has one entry per completed UTC
-minute since startup, oldest first, capped at 1,440 entries. The first bucket can
-be a partial minute. `answered` counts successful answers during that minute;
-`queued` and `miners` sample the scheduler at its closing boundary. `end` is the
-start of the newest completed minute. Before the first boundary, arrays are empty
-and `end` names the preceding UTC minute. `answered_last_24h` sums only completed
-history buckets, so the current minute appears after it closes. All history is
-in memory and resets when the pool restarts. Bucket timing uses monotonic elapsed
+divided by 60, using second buckets. History has one entry per full, completed UTC
+minute after the minute in which the server started, oldest first, capped at
+1,440 entries. The startup minute is omitted from history, including its answers;
+those answers still contribute to the rolling rate. `answered` counts successful
+answers during that minute; `queued` and `miners` sample the scheduler at its
+closing boundary. `end` is the start of the newest completed minute. Until the
+first full minute closes, arrays
+are empty and `end` names the preceding UTC minute. `answered_last_24h` sums only
+completed history buckets, so the current minute appears after it closes. All
+history is in memory and resets when the pool restarts. Bucket timing uses monotonic elapsed
 time anchored to UTC at startup.
 
 ## Client-facing errors

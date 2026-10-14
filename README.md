@@ -182,7 +182,9 @@ main thread is the bottleneck, so a recent desktop CPU (Ryzen 7000/9000, Intel
 pool-miner bench --pool https://pool.example.com --models h2o --duration 120
 ```
 
-`bench` runs every profile that fits, without joining the pool, with a fixed mix
+`bench` runs fitting profiles (skipping published offload profiles when a full-GPU
+profile of the model fits, unless selected via `--profile`/`--context`), without
+joining the pool, with a fixed mix
 of request sizes like the pool's (40% 300–1,500 tokens, 30% 1,500–4,000, 20%
 4,000–12,000, 10% 12,000–40,000), and prints requests/s, questions/s, prompt
 tokens/s, p50/p95 latency and peak GPU memory and RAM per profile. Add `--json`

@@ -866,13 +866,14 @@ impl Scheduler {
             MinerMessage::Result { attempt_id, body } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
                     let job = self.remove_job(&job_id).expect("released job exists");
-                    self.stats.answered(job.new.request.question_count);
                     let profile = match &job.state {
                         JobState::Dispatched { profile, .. } => profile.clone(),
                         JobState::Queued => String::new(),
                     };
                     let body = shape_response(&job, body);
-                    let _ = job.events.try_send(JobEvent::Result { body, profile });
+                    if job.events.try_send(JobEvent::Result { body, profile }).is_ok() {
+                        self.stats.answered(job.new.request.question_count);
+                    }
                 }
             }
             MinerMessage::StreamStart { .. } => {}
@@ -880,7 +881,6 @@ impl Scheduler {
             MinerMessage::StreamEnd { attempt_id, usage } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
                     let job = self.remove_job(&job_id).expect("released job exists");
-                    self.stats.answered(job.new.request.question_count);
                     if job.new.request.include_usage
                         && let Some(usage) = usage
                     {
@@ -890,7 +890,9 @@ impl Scheduler {
                         );
                         let _ = job.events.try_send(JobEvent::Chunk(chunk));
                     }
-                    let _ = job.events.try_send(JobEvent::End);
+                    if job.events.try_send(JobEvent::End).is_ok() {
+                        self.stats.answered(job.new.request.question_count);
+                    }
                 }
             }
             MinerMessage::JobError { attempt_id, code, message } => {
@@ -1313,6 +1315,15 @@ mod tests {
     }
 
     fn miner(scheduler: &mut Scheduler, session: &str, profile: &str) -> mpsc::Receiver<PoolMessage> {
+        miner_model(scheduler, session, "clef", profile)
+    }
+
+    fn miner_model(
+        scheduler: &mut Scheduler,
+        session: &str,
+        model_id: &str,
+        profile: &str,
+    ) -> mpsc::Receiver<PoolMessage> {
         let (outbound, receiver) = mpsc::channel(32);
         scheduler.handle(Command::MinerConnected {
             session: session.into(),
@@ -1326,7 +1337,7 @@ mod tests {
                 devices: vec![],
             },
         });
-        let model = scheduler.catalog.model("clef").unwrap();
+        let model = scheduler.catalog.model(model_id).unwrap();
         let loaded = LoadedModel {
             model: model.id.clone(),
             model_revision: scheduler.catalog.model_revision(model),
@@ -1539,6 +1550,9 @@ mod tests {
         scheduler.pump();
         scheduler.advance_stats(now + Duration::from_secs(60));
         scheduler.publish();
+        assert!(scheduler.public_stats.borrow().history.answered.is_empty());
+        scheduler.advance_stats(now + Duration::from_secs(120));
+        scheduler.publish();
         let snapshot = scheduler.public_stats.borrow().clone();
         assert_eq!(snapshot.queued_questions, 3);
         assert_eq!(snapshot.miners, 1);
@@ -1554,6 +1568,7 @@ mod tests {
         let mut scheduler = scheduler();
         let now = Instant::now();
         scheduler.stats = Stats::new(now, Duration::from_secs(120));
+        scheduler.advance_stats(now + Duration::from_secs(60));
         let mut first = miner(&mut scheduler, "first", "cuda-8192");
         let (events, _receiver) = mpsc::channel(1);
         let mut request = job(&scheduler, "retry", 100, None);
@@ -1578,9 +1593,79 @@ mod tests {
         scheduler.on_miner_message("second", result.clone());
         scheduler.on_miner_message("second", result);
         assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, 3.0 / 60.0);
-        scheduler.advance_stats(now + Duration::from_secs(60));
+        scheduler.advance_stats(now + Duration::from_secs(120));
         let snapshot = scheduler.stats.snapshot(0, 0);
         assert_eq!(snapshot.answered_last_24h, 3);
         assert_eq!(snapshot.history.answered, [3]);
+    }
+
+    #[test]
+    fn terminal_success_counts_only_when_enqueued_in_the_client_channel() {
+        for (stream, include_usage, full, closed) in [
+            (false, false, false, false),
+            (false, false, false, true),
+            (true, false, false, false),
+            (true, false, false, true),
+            (true, false, true, false),
+            (true, true, false, false),
+            (true, true, true, false),
+        ] {
+            let mut scheduler = scheduler();
+            let now = Instant::now();
+            scheduler.stats = Stats::new(now, Duration::from_secs(120));
+            scheduler.advance_stats(now + Duration::from_secs(60));
+            let mut outbound = miner_model(&mut scheduler, "miner", "qwen2.5-1.5b-instruct", "cuda-4096");
+            let model = scheduler.catalog.model("qwen2.5-1.5b-instruct").unwrap();
+            let body = json!({"messages": [{"role": "user", "content": "hi"}], "stream": stream,
+                "stream_options": {"include_usage": include_usage}});
+            let mut fields = body.as_object().unwrap().clone();
+            if !stream {
+                fields.remove("stream_options");
+            }
+            let request = requests::validate(Operation::ChatCompletions, model, fields).unwrap();
+            let job = NewJob {
+                id: "terminal".into(),
+                client: "client".into(),
+                model: model.id.clone(),
+                model_revision: scheduler.catalog.model_revision(model),
+                required_context: request.required_context(100),
+                input_tokens: 100,
+                request,
+            };
+            let (events, receiver) = mpsc::channel(1);
+            let mut receiver = Some(receiver);
+            scheduler.admit(job, events).unwrap();
+            scheduler.pump();
+            let PoolMessage::Job { attempt_id, .. } = outbound.try_recv().unwrap() else { panic!("expected job") };
+            if closed {
+                receiver.take();
+            }
+            if full {
+                scheduler.on_miner_message(
+                    "miner",
+                    MinerMessage::StreamChunk { attempt_id: attempt_id.clone(), seq: 0, chunk: json!({"choices": []}) },
+                );
+            }
+            let terminal = if stream {
+                MinerMessage::StreamEnd { attempt_id, usage: Some(json!({"completion_tokens": 1})) }
+            } else {
+                MinerMessage::Result { attempt_id, body: json!({"choices": []}) }
+            };
+            scheduler.on_miner_message("miner", terminal);
+            let delivered = !closed && !full && !include_usage;
+            assert!(scheduler.jobs.is_empty());
+            assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, u64::from(delivered) as f64 / 60.0);
+            if let Some(mut receiver) = receiver {
+                let event = receiver.try_recv().unwrap();
+                if delivered {
+                    assert!(matches!(event, JobEvent::End | JobEvent::Result { .. }));
+                } else {
+                    assert!(matches!(event, JobEvent::Chunk(_)));
+                }
+                assert!(matches!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Disconnected)));
+            }
+            scheduler.advance_stats(now + Duration::from_secs(120));
+            assert_eq!(scheduler.stats.snapshot(0, 0).answered_last_24h, u64::from(delivered));
+        }
     }
 }

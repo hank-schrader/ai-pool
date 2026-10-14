@@ -180,7 +180,7 @@ function drawChart() {
   if (!stats) return;
   const pts = series(rangeMin);
   if (!pts.length) {
-    svg("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "tick" }, el).textContent = "History will appear after the first minute.";
+    svg("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "tick" }, el).textContent = "History will appear after the first full minute.";
     return;
   }
   const { step, top: max } = niceScale(Math.max(...pts.map(p => p.v)) * 1.05);
@@ -223,15 +223,18 @@ function sparkline(id, values) {
   // last hour, up to 12 points: de-emphasis line, accent end dot
   const el = $(id); el.replaceChildren();
   const pts = [], recent = values.slice(-60);
-  for (let k = 0; k < recent.length; k += 5) {
-    const chunk = recent.slice(k, k + 5);
+  const chunks = Math.min(12, recent.length);
+  for (let k = 0; k < chunks; k++) {
+    const chunk = recent.slice(Math.floor(k * recent.length / chunks), Math.floor((k + 1) * recent.length / chunks));
     pts.push(chunk.reduce((a, b) => a + b, 0) / chunk.length);
   }
   if (!pts.length) return;
   const W = 140, H = 40, max = Math.max(...pts, 1), min = Math.min(...pts, 0);
   const x = i => 4 + (W - 8) * (pts.length === 1 ? 1 : i / (pts.length - 1)), y = v => 4 + (H - 8) * (1 - (v - min) / ((max - min) || 1));
-  svg("path", { d: pts.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(""), fill: "none",
-    stroke: "var(--deemph)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, el);
+  if (pts.length > 1) {
+    svg("path", { d: pts.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(""), fill: "none",
+      stroke: "var(--deemph)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, el);
+  }
   svg("circle", { cx: x(pts.length - 1), cy: y(pts[pts.length - 1]), r: 4, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, el);
 }
 

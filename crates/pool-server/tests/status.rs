@@ -91,6 +91,10 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
         }
     });
     let app = router(state);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    scheduler.snapshot().await;
+    tokio::time::resume();
     let request = json!({"model": "clef", "state": "short", "questions": {
         "q": {"type": "noul", "instructions": "one"},
         "r": {"type": "noul", "instructions": "two"},
@@ -138,6 +142,11 @@ async fn public_status_routes_need_no_auth_and_set_security_and_cache_headers() 
     let page = String::from_utf8(to_bytes(response.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
     assert!(page.contains("fetch(\"v1/stats\", { cache: \"no-store\" })"));
     assert!(!page.contains("mockStats"));
+
+    for path in ["/healthz", "/readyz"] {
+        let response = app.clone().oneshot(Request::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
 
     let response = app.clone().oneshot(Request::builder().uri("/v1/stats").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);

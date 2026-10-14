@@ -717,6 +717,10 @@ async fn completed_multi_question_jobs_increment_public_answered_totals() {
     let state = AppState::new(config(), Catalog::parse(CATALOG).unwrap());
     let scheduler = state.scheduler.clone();
     let addr = start_with_state(state).await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    scheduler.snapshot().await;
+    tokio::time::resume();
     let (tx, _seen) = mpsc::unbounded_channel();
     fake_miner(addr, "answering", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
     wait_ready(addr, "clef", 1).await;
