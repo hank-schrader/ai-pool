@@ -175,8 +175,21 @@ accelerator memory. **Offload profiles** (`cuda-<context>-gpu<layers>`, with
 `gpu_layers` and `host_memory_mib`) keep only some layers on an NVIDIA GPU and the
 rest in system RAM. Clef runs on GPUs with as little as about 2 GB of VRAM when
 there is about 11 GB of free RAM, at nearly full speed. The miner picks them only
-when nothing fits fully on the GPU. Miners only run published profiles. They never stretch
-context into spare memory. Pin weight URLs to a repository revision, not `main`;
+when nothing fits fully on the GPU. If no published placement fits a selected
+CUDA model, the miner can automatically keep all its weights in system RAM
+(`-ngl 0`) at its smallest published context and slot count. It reserves estimated
+VRAM for CUDA buffers and estimated RAM for weights and runtime overhead, then
+requires the existing near-full-context probe to answer within 120 seconds before
+serving. A failed probe leaves the model unavailable. The plan and model list
+label this placement as an **automatic RAM fallback (estimate)**; it can be much
+slower than GPU inference.
+
+An explicit `--profile` or `--context` may also use RAM fallback while keeping
+the requested setting. The miner reports the published profile ID to the pool.
+Fallback does not resolve combined memory pressure when selected models fit
+individually but cannot fit together. Miners only use published contexts and
+slot counts. They never stretch context into spare memory.
+Pin weight URLs to a repository revision, not `main`;
 the sha256 is checked on every download. Restart the server after editing the
 catalog.
 

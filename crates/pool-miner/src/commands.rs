@@ -8,12 +8,13 @@ use pool_runtime::{download, helper, install, manifest};
 use crate::{
     Cli,
     hardware::{self, Machine},
+    plan::{self, Placement},
     setup,
     ui::{self, Reporter},
 };
 
 fn profile_fits(profile: &pool_protocol::Profile, machine: &Machine) -> bool {
-    profile.memory_mib <= machine.budget_mib && profile.host_memory_mib.unwrap_or(0) <= machine.ram_budget_mib
+    Placement::Published.fits(profile, machine.budget_mib, machine.ram_budget_mib)
 }
 
 fn fits(model: &Model, machine: &Machine) -> String {
@@ -29,7 +30,16 @@ fn fits(model: &Model, machine: &Machine) -> String {
             best.host_memory_mib.unwrap_or(0)
         ),
         Some(best) => format!("fits up to {} ({} MiB)", best.id, best.memory_mib),
-        None => format!("does not fit (needs {} MiB)", profiles[0].memory_mib),
+        None => match plan::plan(
+            &[model],
+            machine.accelerator,
+            machine.budget_mib,
+            machine.ram_budget_mib,
+            &Default::default(),
+        ) {
+            Ok(choices) => format!("fits {} with weights in RAM (estimate)", choices[0].profile.id),
+            Err(_) => format!("does not fit (needs {} MiB)", profiles[0].memory_mib),
+        },
     }
 }
 
@@ -76,6 +86,11 @@ pub async fn list_models(cli: &Cli) -> Result<(), String> {
                 Ok(machine) if machine.accelerator == profile.accelerator => {
                     if profile_fits(profile, machine) {
                         "fits"
+                    } else if profile.memory_mib > machine.budget_mib
+                        && plan::ram_fallback(model, profile)
+                            .is_some_and(|ram| ram.fits(profile, machine.budget_mib, machine.ram_budget_mib))
+                    {
+                        "fits with weights in RAM (estimate)"
                     } else {
                         "too large"
                     }

@@ -22,6 +22,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::plan::Placement;
+
 /// Restarts allowed after a crash before the model stays down.
 const MAX_RESTARTS: u32 = 3;
 /// A process that ran this long resets the restart budget.
@@ -55,7 +57,7 @@ pub struct Hosted {
     pub device: String,
     /// Profiles to try, the planned one first; smaller ones follow only when
     /// the plan chose automatically.
-    profiles: Vec<Profile>,
+    profiles: Vec<(Profile, Placement)>,
     launch: LaunchSpec,
     ready: watch::Sender<Option<Ready>>,
     /// Base URL of a runtime a job found broken; the supervisor restarts it.
@@ -69,7 +71,7 @@ impl Hosted {
     pub fn new(
         model: Model,
         revision: String,
-        profiles: Vec<Profile>,
+        profiles: Vec<(Profile, Placement)>,
         device: String,
         launch: LaunchSpec,
         counter: Option<ClefCounter>,
@@ -146,12 +148,18 @@ impl Hosted {
             let mut level = 0;
             let mut restarts = 0;
             loop {
-                let profile = hosted.profiles[level].clone();
+                let (profile, placement) = hosted.profiles[level].clone();
                 let mut launch = hosted.launch.clone();
                 launch.context_tokens = profile.context_tokens;
                 launch.slots = profile.slots();
-                if let Some(layers) = profile.gpu_layers {
-                    launch.gpu_layers = layers;
+                launch.gpu_layers = placement.gpu_layers(&profile, hosted.model.execution.gpu_layers);
+                if placement != Placement::Published {
+                    tracing::info!(
+                        "{label}: {} uses automatic RAM fallback (-ngl 0), estimated {} MiB accelerator memory + {} MiB RAM",
+                        profile.id,
+                        placement.memory_mib(&profile),
+                        placement.host_memory_mib(&profile)
+                    );
                 }
                 let started = Instant::now();
                 let server = tokio::select! {
@@ -175,13 +183,15 @@ impl Hosted {
                                 tracing::warn!(
                                     "{label}: {} failed its startup probe ({problem}); stepping down to {}",
                                     profile.id,
-                                    next.id
+                                    next.0.id
                                 );
                                 level += 1;
                                 continue;
                             }
-                            let hint = if hosted.profiles.len() == 1 && level == 0 {
-                                " (this profile was forced; try a smaller --context or --profile)"
+                            let hint = if placement != Placement::Published {
+                                " (the automatic RAM fallback estimate did not pass qualification)"
+                            } else if hosted.profiles.len() == 1 && level == 0 {
+                                " (try a smaller --context or --profile)"
                             } else {
                                 ""
                             };

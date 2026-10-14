@@ -797,6 +797,18 @@ The chat weights are approximately 1.04 GiB. The profile estimates add cache and
 
 Do not infer a higher supported context from spare memory. Select only a published profile.
 
+CUDA miners may change weight placement to an automatic RAM fallback (`-ngl 0`)
+when no published placement fits a model individually. Automatic selection keeps
+the smallest published context and slot count; an explicit profile/context keeps
+its requested setting. The catalog profile and advertised ID remain unchanged.
+Admission reserves estimated accelerator memory of `max(1024, profile MiB -
+weight MiB) + 256` and estimated host memory of `weight MiB + max(profile MiB -
+weight MiB, 0) + 2048`, with weights rounded up to MiB and any same-context,
+same-slot published zero-layer requirements as lower bounds. These estimates
+include runtime headroom in addition to the hardware budget's OS reserve.
+The near-full-context probe must still pass within 120 seconds before serving.
+Combined pressure between models that fit individually does not trigger fallback.
+
 **Schema rules**
 
 Generate JSON Schema from Rust catalog types and perform additional semantic validation:

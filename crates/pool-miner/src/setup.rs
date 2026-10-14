@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     hardware::Machine,
     hosted::Hosted,
-    plan::{self, Choice, Override},
+    plan::{self, Choice, Override, Placement},
     ui::{self, Reporter},
 };
 
@@ -114,28 +114,41 @@ pub fn runtime_target(
 }
 
 pub fn print_plan(choices: &[Choice]) {
-    let total: u64 = choices.iter().map(|choice| choice.profile.memory_mib).sum();
-    let host: u64 = choices.iter().filter_map(|choice| choice.profile.host_memory_mib).sum();
+    let total: u64 = choices.iter().map(Choice::memory_mib).sum();
+    let host: u64 = choices.iter().map(Choice::host_memory_mib).sum();
     eprintln!("Profile plan:");
     for choice in choices {
-        let source = match choice.profile.memory_source {
-            pool_protocol::catalog::MemorySource::Measured => "measured",
-            pool_protocol::catalog::MemorySource::Estimate => "estimate",
+        let source = match (choice.placement, choice.profile.memory_source) {
+            (Placement::Published, pool_protocol::catalog::MemorySource::Measured) => "measured",
+            _ => "estimate",
         };
-        let mut offload = match (choice.profile.gpu_layers, choice.profile.host_memory_mib) {
-            (Some(layers), Some(ram)) => format!(" + {ram} MiB RAM, {layers} layers on the GPU"),
-            _ => String::new(),
+        let mut offload = match choice.placement {
+            Placement::Ram { host_memory_mib, .. } => {
+                format!(" + {host_memory_mib} MiB RAM (estimate), automatic RAM fallback (-ngl 0)")
+            }
+            Placement::Published => match (choice.profile.gpu_layers, choice.profile.host_memory_mib) {
+                (Some(layers), Some(ram)) => format!(" + {ram} MiB RAM, {layers} layers on the GPU"),
+                _ => String::new(),
+            },
         };
         if choice.profile.slots() > 1 {
             offload.push_str(&format!(", {} cache slots", choice.profile.slots()));
         }
         eprintln!(
             "  {:<24} {:<18} context {:>6}  {:>6} MiB ({source}){offload}",
-            choice.model.id, choice.profile.id, choice.profile.context_tokens, choice.profile.memory_mib
+            choice.model.id,
+            choice.profile.id,
+            choice.profile.context_tokens,
+            choice.memory_mib()
         );
     }
+    let estimate = if choices.iter().any(|choice| choice.placement != Placement::Published) {
+        " (includes automatic RAM fallback estimates)"
+    } else {
+        ""
+    };
     if host > 0 {
-        eprintln!("  total {total} MiB accelerator memory + {host} MiB system RAM");
+        eprintln!("  total {total} MiB accelerator memory + {host} MiB system RAM{estimate}");
     } else {
         eprintln!("  total {total} MiB");
     }
@@ -253,8 +266,9 @@ pub async fn start(
         let in_use = options.cache.hold_model(&model.weights).map_err(|error| error.to_string())?;
         // a forced profile is kept as is; a planned one may step down to profiles
         // that need less accelerator memory (and fit RAM) if its probe fails
-        let profiles: Vec<_> = if options.overrides.contains_key(&model.id) {
-            vec![choice.profile.clone()]
+        let profiles: Vec<_> = if options.overrides.contains_key(&model.id) || choice.placement != Placement::Published
+        {
+            vec![(choice.profile.clone(), choice.placement)]
         } else {
             let mut fallback: Vec<_> = model
                 .profiles_for(machine.accelerator)
@@ -269,7 +283,7 @@ pub async fn start(
             fallback.sort_by_key(|profile| std::cmp::Reverse(profile.preference()));
             // the planned profile first, even if a fallback ranks higher
             fallback.sort_by_key(|profile| profile.id != choice.profile.id);
-            fallback
+            fallback.into_iter().map(|profile| (profile, Placement::Published)).collect()
         };
         let hosted = Arc::new(Hosted::new(
             model.clone(),
