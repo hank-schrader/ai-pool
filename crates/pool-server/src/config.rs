@@ -31,6 +31,8 @@ pub struct Config {
     pub miner_auth: MinerAuth,
     /// Concurrent miner connections accepted.
     pub max_miners: usize,
+    /// Concurrent public statistics streams accepted.
+    pub max_stats_streams: usize,
     pub admin_token: Option<String>,
     pub request_timeout: Duration,
     pub count_timeout: Duration,
@@ -69,6 +71,7 @@ impl Config {
             miner_tokens: list("POOL_MINER_TOKENS"),
             miner_auth,
             max_miners: parse("POOL_MAX_MINERS", "256")?,
+            max_stats_streams: parse("POOL_MAX_STATS_STREAMS", "128")?,
             admin_token: var("POOL_ADMIN_TOKEN"),
             request_timeout: seconds("POOL_REQUEST_TIMEOUT_SECONDS", 180)?,
             count_timeout: seconds("POOL_COUNT_TIMEOUT_SECONDS", 10)?,
@@ -100,6 +103,7 @@ impl Config {
                 Err("POOL_AUTH_MODE=keys needs POOL_MINER_TOKENS, or POOL_MINER_AUTH=open to accept anonymous miners"
                     .into())
             }
+            _ if self.max_stats_streams == 0 => Err("POOL_MAX_STATS_STREAMS must be positive".into()),
             _ if self.max_miners == 0 => Err("POOL_MAX_MINERS must be positive".into()),
             _ if [
                 self.max_active_per_client,

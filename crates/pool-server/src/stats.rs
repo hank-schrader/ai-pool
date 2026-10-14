@@ -8,6 +8,7 @@ use tokio::time::Instant;
 
 const RATE_SECONDS: usize = 60;
 const HISTORY_MINUTES: usize = 1440;
+const LIVE_SECONDS: usize = 300;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StatsSnapshot {
@@ -17,6 +18,15 @@ pub struct StatsSnapshot {
     pub answered_per_second: f64,
     pub answered_last_24h: u64,
     pub history: Arc<History>,
+    pub live: Arc<Vec<StatsPoint>>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct StatsPoint {
+    pub t: String,
+    pub answered: u64,
+    pub queued: u64,
+    pub miners: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +55,7 @@ pub(crate) struct Stats {
     minutes: VecDeque<Minute>,
     history_answered: u64,
     history: Arc<History>,
+    live: Arc<Vec<StatsPoint>>,
 }
 
 impl Stats {
@@ -61,6 +72,7 @@ impl Stats {
             minute_answered: 0,
             minutes: VecDeque::with_capacity(HISTORY_MINUTES),
             history_answered: 0,
+            live: Arc::new(Vec::new()),
             history: Arc::new(History {
                 interval_seconds: 60,
                 end: timestamp(minute.saturating_sub(1) * 60),
@@ -74,6 +86,23 @@ impl Stats {
     /// Use monotonic elapsed time so wall-clock adjustments cannot repeat buckets.
     pub(crate) fn advance(&mut self, now: Instant, queued: u64, miners: usize) {
         let second = (self.unix_start + now.saturating_duration_since(self.started)).as_secs().max(self.second);
+        if second > self.second {
+            let first_full = self.unix_start.as_secs() + u64::from(self.unix_start.subsec_nanos() != 0);
+            let from = self.second.max(first_full).max(second.saturating_sub(LIVE_SECONDS as u64));
+            let mut live = self.live.as_ref().clone();
+            for s in from..second {
+                live.push(StatsPoint {
+                    t: timestamp(s),
+                    answered: if s == self.second { self.seconds[(s % RATE_SECONDS as u64) as usize] } else { 0 },
+                    queued,
+                    miners,
+                });
+            }
+            if live.len() > LIVE_SECONDS {
+                live.drain(..live.len() - LIVE_SECONDS);
+            }
+            self.live = Arc::new(live);
+        }
         if second - self.second >= RATE_SECONDS as u64 {
             self.seconds.fill(0);
             self.rolling_answered = 0;
@@ -130,6 +159,7 @@ impl Stats {
             answered_per_second: self.rolling_answered as f64 / RATE_SECONDS as f64,
             answered_last_24h: self.history_answered,
             history: self.history.clone(),
+            live: self.live.clone(),
         }
     }
 }
@@ -143,6 +173,60 @@ mod tests {
     use super::*;
     use pool_protocol::{Backend, Catalog, Operation, requests};
     use serde_json::json;
+
+    #[test]
+    fn seconds_skip_partial_startup_and_only_copy_at_boundaries() {
+        let now = Instant::now();
+        let mut stats = Stats::new(now, Duration::from_millis(150_500));
+        stats.answered(3);
+        let initial = stats.snapshot(0, 0);
+        stats.advance(now + Duration::from_millis(499), 7, 2);
+        assert!(Arc::ptr_eq(&initial.live, &stats.snapshot(7, 2).live));
+        stats.advance(now + Duration::from_millis(500), 7, 2);
+        assert!(stats.snapshot(7, 2).live.is_empty());
+        stats.answered(4);
+        stats.advance(now + Duration::from_millis(1500), 8, 3);
+        let snapshot = stats.snapshot(8, 3);
+        assert_eq!(snapshot.live.as_ref(), &[StatsPoint { t: timestamp(151), answered: 4, queued: 8, miners: 3 }]);
+        assert_eq!(snapshot.answered_per_second, 7.0 / 60.0);
+        assert_eq!(snapshot.answered_last_24h, 0);
+        stats.advance(now + Duration::from_millis(1599), 9, 4);
+        assert!(Arc::ptr_eq(&snapshot.live, &stats.snapshot(9, 4).live));
+    }
+
+    #[test]
+    fn live_is_bounded_and_catch_up_samples_last_known_boundary_state() {
+        let now = Instant::now();
+        let mut stats = Stats::new(now, Duration::from_secs(120));
+        stats.answered(9);
+        stats.advance(now + Duration::from_secs(3), 4, 2);
+        assert_eq!(stats.snapshot(4, 2).live.iter().map(|p| p.answered).collect::<Vec<_>>(), [9, 0, 0]);
+        stats.answered(7);
+        stats.advance(now + Duration::from_secs(1_000_000), 8, 3);
+        let snapshot = stats.snapshot(8, 3);
+        assert_eq!(snapshot.live.len(), LIVE_SECONDS);
+        assert_eq!(snapshot.live.first().unwrap().t, timestamp(120 + 1_000_000 - 300));
+        assert_eq!(snapshot.live.last().unwrap().t, timestamp(120 + 1_000_000 - 1));
+        assert!(snapshot.live.iter().all(|p| p.answered == 0 && p.queued == 8 && p.miners == 3));
+    }
+
+    #[test]
+    fn completed_full_minute_is_the_sum_of_its_completed_seconds() {
+        let now = Instant::now();
+        let mut stats = Stats::new(now, Duration::from_millis(150_500));
+        stats.answered(99);
+        stats.advance(now + Duration::from_millis(29_500), 0, 0);
+        for second in 0..60 {
+            stats.answered(second + 1);
+            stats.advance(now + Duration::from_millis(29_500) + Duration::from_secs(second + 1), 2, 1);
+        }
+        let snapshot = stats.snapshot(2, 1);
+        let sum: u64 = snapshot.live.iter().filter(|p| p.t >= timestamp(180)).map(|p| p.answered).sum();
+        assert_eq!(sum, (1..=60).sum::<u64>());
+        assert_eq!(snapshot.history.answered, [sum]);
+        assert_eq!(snapshot.answered_last_24h, sum);
+        assert_eq!(snapshot.live.last().unwrap().t, timestamp(239));
+    }
 
     #[test]
     fn validated_requests_count_systemone_questions_and_one_chat_completion() {

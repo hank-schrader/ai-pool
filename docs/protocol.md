@@ -69,24 +69,36 @@ A job is retried **once**, on a different miner, if its miner disconnects, fails
 
 ## Public status page and totals
 
-`GET /` serves the pool's live status page, and `GET /v1/stats` returns its JSON
-data. Both are unauthenticated, as are the existing `GET /healthz` and
-`GET /readyz`, including in `keys` mode; existing client, miner and admin
-routes keep their authentication requirements. The page uses no external
-resources, refreshes every 10 seconds, and retains its last data with an Offline
-indicator if a refresh fails. Its content security policy permits its inline
-script and styles and same-origin fetches; other resources are denied by default.
+`GET /` serves the Svelte status page. `GET /v1/stats` and
+`GET /v1/stats/stream` expose only pool totals, without miner/client identities.
+These routes, `/assets/{path}`, `/healthz` and `/readyz` are unauthenticated,
+including in `keys` mode; client, miner and admin routes keep their authentication.
+The page uses same-origin assets and connections, with no inline scripts or styles.
+Its HTML uses `Cache-Control: no-cache`, hashed assets use
+`public, max-age=31536000, immutable`, and all embedded assets use
+`X-Content-Type-Options: nosniff`. HTML CSP is exactly:
 
-`GET /v1/stats` sends `Cache-Control: public, max-age=5`. Its response contains
-only pool totals, with no miner or client identities:
+```text
+default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'
+```
+
+`GET /v1/stats` sends `Cache-Control: public, max-age=5`, reading the latest
+shared publication. Its existing top-level totals/history remain compatible;
+`version`, `epoch`, `seq`, and `live` are added:
 
 ```json
 {
+  "version": 1,
+  "epoch": "00000000-0000-4000-8000-000000000001",
+  "seq": 123,
   "updated_at": "2026-10-14T12:02:05Z",
   "miners": 2,
   "queued_questions": 3,
   "answered_per_second": 0.5,
   "answered_last_24h": 90,
+  "live": [
+    {"t": "2026-10-14T12:02:04Z", "answered": 1, "queued": 3, "miners": 2}
+  ],
   "history": {
     "interval_seconds": 60,
     "end": "2026-10-14T12:01:00Z",
@@ -97,26 +109,83 @@ only pool totals, with no miner or client identities:
 }
 ```
 
-`miners` counts connected, non-draining sessions, even if they have not announced
+`miners` counts connected, non-draining sessions, including sessions without
 loaded models. `queued_questions` sums questions in jobs waiting for dispatch,
 including retries waiting again; parsing, token counting and active jobs are
-excluded. A systemone job contributes the number of entries in its `questions`
-object; a chat completion contributes one. Only successful job completions count,
-once per job regardless of retries, after its terminal success event is enqueued
-in the client channel. Streams count only if their final end event is enqueued.
+excluded. A systemone job contributes its `questions` entry count; a chat
+completion contributes one. A successful job counts once regardless of retries,
+only after the terminal success event reaches the client channel. Streams count
+only when their final end event is enqueued.
 
-`answered_per_second` is questions answered in the rolling 60-second window
-divided by 60, using second buckets. History has one entry per full, completed UTC
-minute after the minute in which the server started, oldest first, capped at
-1,440 entries. The startup minute is omitted from history, including its answers;
-those answers still contribute to the rolling rate. `answered` counts successful
-answers during that minute; `queued` and `miners` sample the scheduler at its
-closing boundary. `end` is the start of the newest completed minute. Until the
-first full minute closes, arrays
-are empty and `end` names the preceding UTC minute. `answered_last_24h` sums only
-completed history buckets, so the current minute appears after it closes. All
-history is in memory and resets when the pool restarts. Bucket timing uses monotonic elapsed
-time anchored to UTC at startup.
+`answered_per_second` is the rolling 60-second question count divided by 60.
+`live` is oldest first, capped at 300 completed UTC seconds. The partial startup
+second is excluded; its answers still contribute to the rolling rate. History
+contains completed UTC minutes, oldest first, capped at 1,440 entries. The startup
+minute is excluded, including its answers, even when startup aligns to a minute.
+`answered` counts that bucket's successful answers; full-minute counts equal the
+sum of their second buckets. `queued` and `miners` sample closing boundary state
+(last known state during catch-up). `history.end` names the start of the newest
+completed minute; arrays are empty until the first full minute closes.
+`answered_last_24h` sums completed history buckets only. Bucket intervals are
+half-open `[t, t + interval)` (1 second / 60 seconds). Timing uses monotonic
+elapsed time anchored to UTC at startup. Catch-up work is bounded by retained
+history capacity. All history is in memory and resets on restart.
+
+### Statistics SSE, version 1
+
+`GET /v1/stats/stream` responds with `text/event-stream` and
+`Cache-Control: no-store, no-transform`. Comment keep-alives occur every 15 seconds.
+`POOL_MAX_STATS_STREAMS` is a positive integer, default **128**; connections at
+capacity receive **503**, `Retry-After: 30`, and `Cache-Control: no-store` immediately.
+The permit belongs to the response body and is released on disconnect. Readers
+use bounded watch channels; there are no per-client unbounded queues or scheduler
+commands. One process-wide publisher samples scheduler stats once per second,
+skips missed timer ticks, and serializes each payload once. Publications occur
+only when the completed-second endpoint advances.
+
+Event names are `snapshot` and `tick`, each containing one JSON object. Shared
+fields are `version` (integer, 1), `epoch` (UUID string identifying the server
+process), `seq` (non-negative integer, incremented once per shared publication),
+`updated_at` (RFC3339 UTC), and `totals` containing non-negative integer
+`miners`, `queued_questions`, `answered_last_24h` and finite, non-negative
+`answered_per_second`. `snapshot` adds `live` and `history` with the shapes above.
+`tick` adds `second` (one completed-second point) and `minute` (one completed-minute
+point or null). Both points have `t` (RFC3339 UTC bucket start) and non-negative
+integer `answered`, `queued`, `miners`.
+
+```text
+event: snapshot
+data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":0,"updated_at":"2026-10-14T12:02:05Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5},"live":[{"t":"2026-10-14T12:02:04Z","answered":1,"queued":3,"miners":2}],"history":{"interval_seconds":60,"end":"2026-10-14T12:01:00Z","answered":[60,30],"queued":[0,3],"miners":[2,2]}}
+
+event: tick
+data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":1,"updated_at":"2026-10-14T12:02:06Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5},"second":{"t":"2026-10-14T12:02:05Z","answered":0,"queued":3,"miners":2},"minute":null}
+
+```
+
+No SSE `id` is sent. `Last-Event-ID` is ignored. Every connection starts with a
+snapshot whose `seq` identifies its shared publication. Adjacent ticks increment
+`seq` by exactly one. Ignore duplicates; a sequence gap or epoch change requires
+a replacement snapshot. Each shared frame retains its matching full snapshot.
+When sampling skips completed seconds, the publisher emits a snapshot-only frame;
+when a connection misses publications, it sends the latest snapshot.
+
+The page defaults to Live: a muted per-second area and a blue trailing 10-second
+average with a legend. Historical ranges (1 hour, 6 hours, 24 hours) append a
+provisional current-minute average: questions so far divided by completed seconds
+observed. Tooltip/table label it **so far**, mark incomplete startup coverage,
+and replace it with the authoritative completed minute. At rollover the
+provisional point is absent until one current-minute second has completed.
+The hero remains the **60-second average**. On stream errors or gaps, the page
+closes the stream, immediately polls `/v1/stats`, then polls every 10 seconds,
+retaining data with an Offline icon and label. SSE retry uses exponential,
+jittered backoff capped at 60 seconds, resetting after 30 seconds of healthy
+ticks. The initial snapshot has a 10-second deadline. After receiving data, a
+5-second watchdog counts only valid, advancing publications; duplicates and
+keep-alive comments cannot refresh it. A timeout closes SSE, resumes polling and
+backoff, and shows a neutral Reconnecting… indicator until advancing stream data
+returns. Before any data or failure, the page shows neutral Connecting….
+Hidden tabs abort polling and close SSE; becoming visible reconnects. Stream
+deadlines and watchdogs are cleared on hide, connection replacement and cleanup.
 
 ## Client-facing errors
 

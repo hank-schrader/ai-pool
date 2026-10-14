@@ -4,3 +4,8 @@
 *.gguf
 *.gguf.part
 __pycache__/
+
+node_modules/
+.vite/
+.npm/
+web/coverage/

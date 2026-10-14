@@ -1,12 +1,14 @@
 //! ai-pool server: accepts client inference requests and routes them to miners.
 
 pub mod api;
+pub mod assets;
 pub mod auth;
 pub mod config;
 pub mod error;
 pub mod miners;
 pub mod scheduler;
 pub mod stats;
+pub mod stats_stream;
 
 use std::sync::{Arc, atomic::AtomicUsize};
 
@@ -32,6 +34,7 @@ pub struct AppState {
     pub legacy_catalog_revision: Arc<str>,
     pub auth: Arc<Auth>,
     pub scheduler: SchedulerHandle,
+    pub stats_publisher: stats_stream::StatsPublisher,
     /// Open miner connections, bounded by `Config::max_miners`.
     pub miner_connections: Arc<AtomicUsize>,
 }
@@ -46,6 +49,8 @@ impl AppState {
             model.profiles.retain(|profile| !profile.offloaded());
         }
         let catalog = Arc::new(catalog);
+        let scheduler = scheduler::spawn(config.clone(), catalog.clone());
+        let stats_publisher = stats_stream::StatsPublisher::spawn(scheduler.stats_receiver(), config.max_stats_streams);
         Self {
             catalog_revision: catalog.revision().into(),
             offload_catalog_revision: offload.revision().into(),
@@ -53,7 +58,8 @@ impl AppState {
             legacy_catalog_revision: legacy.revision().into(),
             legacy_catalog: Arc::new(legacy),
             auth: Arc::new(Auth::new(&config)),
-            scheduler: scheduler::spawn(config.clone(), catalog.clone()),
+            scheduler,
+            stats_publisher,
             miner_connections: Arc::new(AtomicUsize::new(0)),
             catalog,
             config: Arc::new(config),
@@ -63,8 +69,10 @@ impl AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(api::status_page))
+        .route("/", get(assets::index))
+        .route("/assets/{*path}", get(assets::asset))
         .route("/v1/stats", get(api::stats))
+        .route("/v1/stats/stream", get(api::stats_stream))
         .route("/healthz", get(api::healthz))
         .route("/readyz", get(api::readyz))
         .route("/v1/models", get(api::list_models))

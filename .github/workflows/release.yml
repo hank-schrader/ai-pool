@@ -10,6 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  frontend:
+    uses: ./.github/workflows/frontend.yml
+
   package:
     name: package ${{ matrix.target }}
     strategy:
@@ -54,7 +57,7 @@ jobs:
           path: dist/*.${{ matrix.archive }}
 
   publish:
-    needs: package
+    needs: [package, frontend]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     permissions:

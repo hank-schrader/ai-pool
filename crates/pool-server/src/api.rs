@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header as headers},
     response::{
-        Html, IntoResponse, Response,
+        IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
 };
@@ -21,7 +21,6 @@ use crate::{
     AppState,
     error::ApiError,
     scheduler::{CountRequest, JobEvent, JobGuard, ModelAvailability, NewJob},
-    stats::StatsSnapshot,
 };
 
 /// Upper bound for reading a request body.
@@ -31,16 +30,17 @@ pub async fn healthz() -> &'static str {
     "ok"
 }
 
-pub async fn status_page() -> Response {
+pub async fn stats(State(state): State<AppState>) -> Response {
+    let frame = state.stats_publisher.latest();
     (
-        [(headers::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")],
-        Html(include_str!("../static/index.html")),
+        [(headers::CACHE_CONTROL, "public, max-age=5"), (headers::CONTENT_TYPE, "application/json")],
+        Body::from(frame.rest_json.to_string()),
     )
         .into_response()
 }
 
-pub async fn stats(State(state): State<AppState>) -> impl IntoResponse {
-    ([(headers::CACHE_CONTROL, "public, max-age=5")], Json::<StatsSnapshot>(state.scheduler.stats()))
+pub async fn stats_stream(State(state): State<AppState>) -> Response {
+    state.stats_publisher.response()
 }
 
 pub async fn readyz(State(state): State<AppState>) -> Json<Value> {

@@ -1,0 +1,34 @@
+name: frontend
+
+on:
+  workflow_call:
+
+jobs:
+  frontend:
+    name: check frontend and committed assets
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.13.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm install --global npm@11.6.2
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      # Vite removes the output directory before emitting the production build.
+      - run: npm run build
+      - name: Verify all committed and untracked dist files
+        working-directory: .
+        run: |
+          changes=$(git status --porcelain --untracked-files=all -- crates/pool-server/static/dist)
+          if [ -n "$changes" ]; then
+            printf '%s\n' "$changes"
+            git diff -- crates/pool-server/static/dist
+            exit 1
+          fi

@@ -9,6 +9,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  frontend:
+    uses: ./.github/workflows/frontend.yml
+
   check:
     name: fmt, clippy, tests
     runs-on: ubuntu-22.04

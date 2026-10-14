@@ -7,3 +7,8 @@ docs
 scripts
 native
 *.gguf
+
+**/node_modules
+**/.vite
+**/.npm
+web/coverage/

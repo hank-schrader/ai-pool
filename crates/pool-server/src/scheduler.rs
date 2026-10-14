@@ -295,6 +295,11 @@ impl SchedulerHandle {
         self.stats.borrow().clone()
     }
 
+    /// Independent network readers never enqueue scheduler commands.
+    pub fn stats_receiver(&self) -> watch::Receiver<StatsSnapshot> {
+        self.stats.clone()
+    }
+
     pub async fn snapshot(&self) -> Snapshot {
         let (reply, response) = oneshot::channel();
         self.send(Command::Snapshot { reply });
@@ -1278,6 +1283,7 @@ mod tests {
             miner_tokens: vec![],
             miner_auth: crate::config::MinerAuth::Token,
             max_miners: 256,
+            max_stats_streams: 128,
             admin_token: None,
             request_timeout: Duration::from_secs(20),
             count_timeout: Duration::from_secs(5),

@@ -28,6 +28,7 @@ fn config() -> Config {
         miner_tokens: vec![],
         miner_auth: MinerAuth::Token,
         max_miners: 256,
+        max_stats_streams: 128,
         admin_token: None,
         request_timeout: Duration::from_secs(20),
         count_timeout: Duration::from_secs(5),
@@ -112,6 +113,8 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(61)).await;
     scheduler.snapshot().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
     tokio::time::resume();
     let response = app.oneshot(Request::builder().uri("/v1/stats").body(Body::empty()).unwrap()).await.unwrap();
     let stats: Value = serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
@@ -137,10 +140,12 @@ async fn public_status_routes_need_no_auth_and_set_security_and_cache_headers() 
     assert_eq!(response.headers()["content-type"], "text/html; charset=utf-8");
     assert_eq!(
         response.headers()["content-security-policy"],
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
     );
     let page = String::from_utf8(to_bytes(response.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
-    assert!(page.contains("fetch(\"v1/stats\", { cache: \"no-store\" })"));
+    assert!(page.contains("./assets/"));
+    assert!(!page.contains("<style"));
+    assert!(!page.contains("style="));
     assert!(!page.contains("mockStats"));
 
     for path in ["/healthz", "/readyz"] {

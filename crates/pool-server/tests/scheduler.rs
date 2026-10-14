@@ -30,6 +30,7 @@ fn config() -> Config {
         miner_tokens: vec![],
         miner_auth: MinerAuth::Token,
         max_miners: 256,
+        max_stats_streams: 128,
         admin_token: None,
         request_timeout: Duration::from_secs(20),
         count_timeout: Duration::from_secs(5),
@@ -730,6 +731,13 @@ async fn completed_multi_question_jobs_increment_public_answered_totals() {
         "s": {"type": "noul", "instructions": "three"}
     }});
     assert_eq!(post(addr, "/v1/systemone", &request).await.status(), 200);
+    // Public API reads the once-per-second shared publication.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(2)).await;
+    scheduler.snapshot().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    tokio::time::resume();
     let url = format!("http://{addr}/v1/stats");
     let stats: Value = reqwest::get(&url).await.unwrap().json().await.unwrap();
     assert_eq!(stats["answered_per_second"], 3.0 / 60.0);
@@ -738,6 +746,8 @@ async fn completed_multi_question_jobs_increment_public_answered_totals() {
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(61)).await;
     scheduler.snapshot().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
     tokio::time::resume();
     let stats: Value = reqwest::get(&url).await.unwrap().json().await.unwrap();
     assert_eq!(stats["answered_last_24h"], 3);
