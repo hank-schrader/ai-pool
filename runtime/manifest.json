@@ -9,6 +9,7 @@
         {
           "target": "x86_64-unknown-linux-gnu",
           "accelerator": "cuda",
+          "min_driver": "570.26",
           "qualified": true,
           "server_binary": "llama-server",
           "archives": [
@@ -29,6 +30,7 @@
         {
           "target": "x86_64-pc-windows-msvc",
           "accelerator": "cuda",
+          "min_driver": "615",
           "qualified": false,
           "server_binary": "llama-server.exe",
           "archives": [

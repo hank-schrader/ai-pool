@@ -10,6 +10,7 @@ pub mod helper;
 pub mod install;
 pub mod manifest;
 pub mod process;
+pub mod requirements;
 pub mod sse;
 
 pub use cache::Cache;

@@ -40,6 +40,8 @@ pub async fn fetch_verified(
         }
     }
 
+    let needed = crate::requirements::disk_bytes(crate::requirements::download_bytes(dest, size), 0);
+    crate::requirements::ensure(&[crate::requirements::disk(dest, needed, crate::requirements::free_bytes(dest)?)])?;
     let part = with_suffix(dest, ".part");
     let mut last_error = None;
     for attempt in 1..=ATTEMPTS {
@@ -200,6 +202,7 @@ pub async fn import_verified(
         fs::remove_file(dest)?;
     }
     if fs::hard_link(source, dest).is_err() {
+        crate::requirements::ensure(&[crate::requirements::disk(dest, size, crate::requirements::free_bytes(dest)?)])?;
         let part = with_suffix(dest, ".part");
         fs::copy(source, &part)?;
         verify_file(&part, size, sha256, progress).await?;

@@ -44,6 +44,19 @@ pub async fn ensure_runtime(
     let expected_marker = marker_text(target);
     let installed = fs::read_to_string(dir.join(MARKER)).is_ok_and(|marker| marker == expected_marker);
     if !installed {
+        let downloads = target.archives.iter().fold(0u64, |sum, archive| {
+            sum.saturating_add(crate::requirements::download_bytes(
+                &cache.download_path(&archive.sha256, &archive.name),
+                archive.size_bytes,
+            ))
+        });
+        let extraction = target.archives.iter().fold(0u64, |sum, archive| sum.saturating_add(archive.size_bytes));
+        let needed = crate::requirements::disk_bytes(downloads, extraction);
+        crate::requirements::ensure(&[crate::requirements::disk(
+            cache.root(),
+            needed,
+            crate::requirements::free_bytes(cache.root())?,
+        )])?;
         install(http, cache, target, &dir, &expected_marker, progress).await?;
     }
     let server = dir.join(&target.server_binary);
@@ -268,6 +281,7 @@ pub async fn check_version(server: &Path, commit: &str) -> Result<String> {
     if !server.is_file() {
         return Err(Error::msg(format!("llama-server not found at {}", server.display())));
     }
+    crate::requirements::ensure(&crate::requirements::loader(server).await?)?;
     let mut command = tokio::process::Command::new(server);
     command.arg("--version").env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let keep: &[&str] = if cfg!(windows) { &["SystemRoot", "windir", "PATH", "TEMP", "TMP"] } else { &["TMPDIR"] };
@@ -276,6 +290,7 @@ pub async fn check_version(server: &Path, commit: &str) -> Result<String> {
             command.env(name, value);
         }
     }
+    crate::requirements::library_path(&mut command, server)?;
     let output = tokio::time::timeout(std::time::Duration::from_secs(60), command.output())
         .await
         .map_err(|_| Error::msg(format!("{} --version timed out", server.display())))??;

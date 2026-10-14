@@ -160,28 +160,105 @@ pub async fn doctor(cli: &Cli) -> Result<(), String> {
     match cli.load_catalog(false).await {
         Ok((catalog, revision)) => {
             println!("[ok]   catalog: {} models, revision {revision}", catalog.models.len());
-            if let (Some(machine), Some(model)) = (&machine, catalog.models.first()) {
-                match setup::runtime_target(&catalog, model, machine, true) {
+            if let Some(model) = catalog.models.first() {
+                let accelerator = machine.as_ref().map_or(
+                    if cfg!(target_os = "macos") {
+                        pool_protocol::Accelerator::Metal
+                    } else {
+                        pool_protocol::Accelerator::Cuda
+                    },
+                    |machine| machine.accelerator,
+                );
+                let names = if cli.models.is_empty() { &catalog.default_models } else { &cli.models };
+                let selected: Result<Vec<_>, _> =
+                    names.iter().map(|id| catalog.model(id).ok_or_else(|| format!("unknown model {id:?}"))).collect();
+                let disk = selected.and_then(|selected| {
+                    setup::disk_check(&catalog, &selected, accelerator, &cache, cli.llama_server.is_some())
+                });
+                match disk {
+                    Ok(check) => {
+                        if check.status == "fail" {
+                            problems += 1;
+                        }
+                        println!("{}", check.line());
+                    }
+                    Err(error) => {
+                        problems += 1;
+                        println!("[fail] disk: {error}");
+                    }
+                }
+                let target = manifest::embedded()
+                    .runtime(&model.runtime)
+                    .filter(|spec| {
+                        catalog
+                            .runtime(&model.runtime)
+                            .is_some_and(|runtime| runtime.llama_cpp_commit == spec.llama_cpp_commit)
+                    })
+                    .and_then(|spec| spec.target(manifest::host_target(), accelerator).map(|target| (spec, target)))
+                    .ok_or_else(|| "no approved runtime target for this platform".to_string());
+                match target {
                     Ok((spec, target)) => {
+                        if let Some(minimum) = &target.min_driver {
+                            let check = match &machine {
+                                Some(machine) => pool_runtime::requirements::driver(&machine.gpu().driver, minimum),
+                                None => pool_runtime::requirements::Check::fail(
+                                    "NVIDIA driver",
+                                    format!("not found (nvidia-smi did not run); this runtime requires >= {minimum}"),
+                                ),
+                            };
+                            if check.status == "fail" {
+                                problems += 1;
+                            }
+                            println!("{}", check.line());
+                        }
                         let qualified = if target.qualified { "qualified" } else { "NOT qualified" };
                         let server = cli.llama_server.clone().or_else(|| {
                             install::is_installed(&cache, spec, target)
                                 .then(|| cache.runtime_dir(&spec.id, &target.target).join(&target.server_binary))
                         });
                         match server {
-                            Some(server) => match install::check_version(&server, &spec.llama_cpp_commit).await {
-                                Ok(version) => {
-                                    println!("[ok]   runtime {} {} ({qualified}): {version}", spec.id, target.target)
+                            Some(server) => {
+                                let checks = pool_runtime::requirements::loader(&server).await;
+                                let usable = match checks {
+                                    Ok(checks) => {
+                                        let mut usable = true;
+                                        for check in checks {
+                                            if check.status == "fail" {
+                                                problems += 1;
+                                                usable = false;
+                                            }
+                                            println!("{}", check.line());
+                                        }
+                                        usable
+                                    }
+                                    Err(error) => {
+                                        problems += 1;
+                                        println!("[fail] Linux loader: {error}");
+                                        false
+                                    }
+                                };
+                                if usable {
+                                    match install::check_version(&server, &spec.llama_cpp_commit).await {
+                                        Ok(version) => {
+                                            println!(
+                                                "[ok]   runtime {} {} ({qualified}): {version}",
+                                                spec.id, target.target
+                                            )
+                                        }
+                                        Err(error) => {
+                                            problems += 1;
+                                            println!("[fail] runtime: {error}");
+                                        }
+                                    }
                                 }
-                                Err(error) => {
-                                    problems += 1;
-                                    println!("[fail] runtime: {error}");
-                                }
-                            },
-                            None => println!(
-                                "[--]   runtime {} {} ({qualified}): not installed yet",
-                                spec.id, target.target
-                            ),
+                            }
+                            None => {
+                                println!(
+                                    "[--]   runtime {} {} ({qualified}): not installed yet",
+                                    spec.id, target.target
+                                );
+                                println!("[--]   Linux loader: checked after runtime installation");
+                            }
                         }
                     }
                     Err(error) => {

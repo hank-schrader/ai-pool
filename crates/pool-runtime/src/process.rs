@@ -144,6 +144,7 @@ impl LlamaServer {
         if let Some(device) = &spec.cuda_device {
             command.env("CUDA_VISIBLE_DEVICES", device);
         }
+        crate::requirements::library_path(&mut command, &spec.server)?;
         #[cfg(target_os = "linux")]
         unsafe {
             // die with the miner even if it is killed without running destructors

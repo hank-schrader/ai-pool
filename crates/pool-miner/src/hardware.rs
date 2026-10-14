@@ -95,11 +95,11 @@ fn detect_nvidia(device: Option<u32>) -> Result<Machine, String> {
         .args(["--query-gpu=index,name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"])
         .output()
         .map_err(|error| {
-            format!("no supported accelerator: nvidia-smi could not run ({error}); is the NVIDIA driver installed?")
+            format!("no supported accelerator: nvidia-smi could not run ({error}); install the host NVIDIA driver, or pass the GPU into the container with NVIDIA Container Toolkit")
         })?;
     if !output.status.success() {
         return Err(format!(
-            "nvidia-smi failed ({}): {}",
+            "nvidia-smi failed ({}): {}; check the host NVIDIA driver and GPU access in the container",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
         ));

@@ -30,6 +30,9 @@ pub struct RuntimeSpec {
 pub struct TargetSpec {
     pub target: String,
     pub accelerator: Accelerator,
+    /// Driver floor for this pinned CUDA build, not the minor-compatibility floor.
+    #[serde(default)]
+    pub min_driver: Option<String>,
     /// Exercised end to end on real hardware; others need explicit opt-in.
     pub qualified: bool,
     pub server_binary: String,
@@ -92,6 +95,12 @@ mod tests {
             let spec = embedded().runtime(&runtime.id).expect("catalog runtime is in the manifest");
             assert_eq!(spec.llama_cpp_commit, runtime.llama_cpp_commit);
             for target in &spec.targets {
+                match target.accelerator {
+                    Accelerator::Cuda => assert!(target.min_driver.as_deref().is_some_and(|version| {
+                        !version.is_empty() && version.split('.').all(|part| part.parse::<u32>().is_ok())
+                    })),
+                    Accelerator::Metal => assert!(target.min_driver.is_none()),
+                }
                 for archive in &target.archives {
                     assert_eq!(archive.sha256.len(), 64);
                     assert!(archive.url.ends_with(&archive.name));

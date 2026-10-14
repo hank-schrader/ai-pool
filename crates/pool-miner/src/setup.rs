@@ -200,6 +200,10 @@ pub async fn install_runtime(
     options: &Options,
 ) -> Result<InstalledRuntime, String> {
     let (spec, target) = runtime_target(catalog, model, machine, options.allow_unqualified_runtime)?;
+    if let Some(minimum) = &target.min_driver {
+        pool_runtime::requirements::ensure(&[pool_runtime::requirements::driver(&machine.gpu().driver, minimum)])
+            .map_err(|error| error.to_string())?;
+    }
     if options.llama_server.is_none() && !install::is_installed(&options.cache, spec, target) {
         let size: u64 = target.archives.iter().map(|archive| archive.size_bytes).sum();
         eprintln!("Installing runtime {} for {} ({})", spec.id, target.target, ui::gib(size));
@@ -222,6 +226,7 @@ pub async fn start(
     let choices =
         plan::plan(selected, machine.accelerator, machine.budget_mib, machine.ram_budget_mib, &options.overrides)?;
     print_plan(&choices);
+    preflight(catalog, selected, machine, options)?;
     confirm_downloads(&options.cache, selected, options.yes)?;
 
     let mut runtimes: HashMap<String, InstalledRuntime> = HashMap::new();
@@ -251,9 +256,70 @@ pub async fn prepare(
     machine: &Machine,
     options: &Options,
 ) -> Result<Prepared, String> {
+    preflight(catalog, &[model], machine, options)?;
     let runtime = install_runtime(catalog, model, machine, options).await?;
     let weights = ensure_weights(&options.cache, model).await?;
     Ok(Prepared { runtime, weights })
+}
+
+pub fn disk_check(
+    catalog: &Catalog,
+    selected: &[&Model],
+    accelerator: pool_protocol::Accelerator,
+    cache: &Cache,
+    override_server: bool,
+) -> Result<pool_runtime::requirements::Check, String> {
+    use pool_runtime::requirements;
+    let mut downloads = 0u64;
+    let mut extraction = 0u64;
+    let mut runtimes = std::collections::HashSet::new();
+    let mut weights = std::collections::HashSet::new();
+    for model in selected {
+        if weights.insert(&model.weights.sha256) {
+            downloads = downloads.saturating_add(requirements::download_bytes(
+                &cache.model_path(&model.weights),
+                model.weights.size_bytes,
+            ));
+        }
+        if !override_server && runtimes.insert(&model.runtime) {
+            let runtime = catalog.runtime(&model.runtime).ok_or("unknown runtime in the catalog")?;
+            let spec = manifest::embedded().runtime(&model.runtime).ok_or("runtime is not approved by this miner")?;
+            if runtime.llama_cpp_commit != spec.llama_cpp_commit {
+                return Err("the pool and this miner pin different llama.cpp commits".into());
+            }
+            let target = spec.target(manifest::host_target(), accelerator).ok_or("runtime target unavailable")?;
+            if !install::is_installed(cache, spec, target) {
+                for archive in &target.archives {
+                    downloads = downloads.saturating_add(requirements::download_bytes(
+                        &cache.download_path(&archive.sha256, &archive.name),
+                        archive.size_bytes,
+                    ));
+                    extraction = extraction.saturating_add(archive.size_bytes);
+                }
+            }
+        }
+    }
+    let needed = requirements::disk_bytes(downloads, extraction);
+    let free = requirements::free_bytes(cache.root()).map_err(|error| error.to_string())?;
+    Ok(requirements::disk(cache.root(), needed, free))
+}
+
+pub fn preflight(catalog: &Catalog, selected: &[&Model], machine: &Machine, options: &Options) -> Result<(), String> {
+    let mut checks =
+        vec![disk_check(catalog, selected, machine.accelerator, &options.cache, options.llama_server.is_some())?];
+    let mut runtimes = std::collections::HashSet::new();
+    for model in selected {
+        if runtimes.insert(&model.runtime) {
+            let (_, target) = runtime_target(catalog, model, machine, options.allow_unqualified_runtime)?;
+            if let Some(minimum) = &target.min_driver {
+                checks.push(pool_runtime::requirements::driver(&machine.gpu().driver, minimum));
+            }
+        }
+    }
+    for check in &checks {
+        eprintln!("{}", check.line());
+    }
+    pool_runtime::requirements::ensure(&checks).map_err(|error| error.to_string())
 }
 
 pub async fn start_exact(
@@ -375,5 +441,28 @@ mod tests {
         let exact = startup_profiles(&ram, Accelerator::Cuda, 20000, true);
         assert_eq!(exact.len(), 1);
         assert_eq!(exact[0].1, ram.placement);
+    }
+
+    #[test]
+    fn disk_plan_reserves_each_weight_once_and_honors_runtime_overrides() {
+        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let mut model = catalog.model("h2o").unwrap().clone();
+        model.weights.size_bytes = 1_000_000_000;
+        let root = std::env::temp_dir().join(format!("ai-pool-disk-plan-{}", uuid::Uuid::new_v4()));
+        let cache = Cache::new(Some(root.clone())).unwrap();
+        let check = disk_check(&catalog, &[&model, &model], Accelerator::Cuda, &cache, true).unwrap();
+        assert!(check.message.contains("1.54 GB needed"), "{}", check.message);
+        let mut other = model.clone();
+        other.weights.sha256 = "f".repeat(64);
+        let check = disk_check(&catalog, &[&model, &other], Accelerator::Cuda, &cache, true).unwrap();
+        assert!(check.message.contains("2.54 GB needed"), "{}", check.message);
+        let spec = manifest::embedded().runtime(&model.runtime).unwrap();
+        if let Some(target) = spec.target(manifest::host_target(), Accelerator::Cuda) {
+            let check = disk_check(&catalog, &[&model, &other], Accelerator::Cuda, &cache, false).unwrap();
+            let archives = target.archives.iter().map(|archive| archive.size_bytes).sum::<u64>();
+            let needed = pool_runtime::requirements::disk_bytes(2_000_000_000 + archives, archives);
+            assert!(check.message.contains(&format!("{:.2} GB needed", needed as f64 / 1e9)), "{}", check.message);
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

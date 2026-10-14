@@ -175,6 +175,7 @@ pub async fn run(cli: &Cli, duration: u64, seed: u64, json: bool) -> Result<(), 
     if !choices.is_empty() {
         let downloads: Vec<_> =
             selected.iter().copied().filter(|model| choices.iter().any(|choice| choice.model.id == model.id)).collect();
+        setup::preflight(&catalog, &downloads, &machine, &options)?;
         setup::confirm_downloads(&options.cache, &downloads, options.yes)?;
     }
     let cancelled = CancellationToken::new();
