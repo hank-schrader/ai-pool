@@ -34,6 +34,8 @@ pub struct Validated {
     pub include_usage: bool,
     /// Tokens reserved for output on top of the counted input.
     pub output_tokens: u32,
+    /// Pool-only minimum loaded profile context; never forwarded to a miner.
+    pub min_context_tokens: Option<u32>,
     /// Body the miner sends to its runtime.
     pub payload: Value,
     /// Body the miner counts input tokens of.
@@ -71,6 +73,7 @@ pub fn validate(operation: Operation, model: &Model, body: Map<String, Value>) -
 }
 
 fn systemone(model: &Model, mut body: Map<String, Value>) -> Result<Validated, RequestError> {
+    let min_context_tokens = min_context_tokens(model, &mut body)?;
     let limits = &model.limits;
     let (max_questions, max_options, max_levels) = (
         limits.max_questions.unwrap_or(16),
@@ -180,6 +183,7 @@ fn systemone(model: &Model, mut body: Map<String, Value>) -> Result<Validated, R
         stream: false,
         include_usage: false,
         output_tokens: 0,
+        min_context_tokens,
         count_payload: payload.clone(),
         payload,
     })
@@ -204,6 +208,7 @@ const CHAT_UNSUPPORTED: &[&str] = &[
 ];
 
 fn chat(model: &Model, mut body: Map<String, Value>) -> Result<Validated, RequestError> {
+    let min_context_tokens = min_context_tokens(model, &mut body)?;
     let default_output = model.limits.default_output_tokens.unwrap_or(512);
     let max_output = model.limits.max_output_tokens.unwrap_or(2048);
     body.remove("model");
@@ -285,9 +290,22 @@ fn chat(model: &Model, mut body: Map<String, Value>) -> Result<Validated, Reques
         stream,
         include_usage,
         output_tokens,
+        min_context_tokens,
         count_payload: json!({ "messages": messages }),
         payload: Value::Object(payload),
     })
+}
+
+fn min_context_tokens(model: &Model, body: &mut Map<String, Value>) -> Result<Option<u32>, RequestError> {
+    let Some(value) = body.remove("min_context_tokens") else { return Ok(None) };
+    let max = model.max_context_tokens();
+    match value.as_u64() {
+        Some(tokens) if tokens > 0 && tokens <= u64::from(max) => Ok(Some(tokens as u32)),
+        _ => Err(RequestError::invalid(
+            format!("min_context_tokens must be an integer from 1 to {max}"),
+            Some("min_context_tokens".into()),
+        )),
+    }
 }
 
 fn output_tokens(body: &mut Map<String, Value>, default: u32, max: u32) -> Result<u32, RequestError> {
@@ -389,6 +407,53 @@ mod tests {
 
     fn body(value: Value) -> Map<String, Value> {
         value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn minimum_context_is_validated_and_stripped_on_both_endpoints() {
+        let catalog = catalog();
+        for model in &catalog.models {
+            let operation = if model.backend == Backend::LlamaServerChat {
+                Operation::ChatCompletions
+            } else {
+                Operation::Systemone
+            };
+            let base = if operation == Operation::ChatCompletions {
+                json!({"messages": [{"role": "user", "content": "hi"}], "max_tokens": 64})
+            } else {
+                json!({"state": "hi", "questions": {"q": {"type": "noul", "instructions": "x"}}})
+            };
+            let original = validate(operation, model, body(base.clone())).unwrap();
+            assert_eq!(original.min_context_tokens, None);
+            for tokens in [1, 8192, model.max_context_tokens()] {
+                let mut request = base.clone();
+                request["min_context_tokens"] = tokens.into();
+                let validated = validate(operation, model, body(request)).unwrap();
+                assert_eq!(validated.min_context_tokens, Some(tokens));
+                assert_eq!(validated.payload, original.payload);
+                assert_eq!(validated.count_payload, original.count_payload);
+                assert_eq!(validated.required_context(100), original.required_context(100));
+            }
+            for invalid in [
+                json!(0),
+                json!(-1),
+                json!(1.0),
+                json!(1.5),
+                json!(true),
+                json!("8192"),
+                Value::Null,
+                json!([]),
+                json!({}),
+                json!(u64::MAX),
+                json!(model.max_context_tokens() + 1),
+            ] {
+                let mut request = base.clone();
+                request["min_context_tokens"] = invalid;
+                let error = validate(operation, model, body(request)).unwrap_err();
+                assert_eq!(error.code, "invalid_request");
+                assert_eq!(error.param.as_deref(), Some("min_context_tokens"));
+            }
+        }
     }
 
     #[test]

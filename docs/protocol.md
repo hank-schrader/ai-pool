@@ -25,6 +25,34 @@ Clef counts through `clef-token-count`, which runs the pinned llama-server's own
 
 The required context is the input tokens for systemone. For H2O a profile's `context_tokens` is an inclusive prompt limit, so a prompt of exactly that many tokens fits. A longer prompt is `context_length_exceeded`; a malformed question is `invalid_request`. For chat it is input + reserved output (`max_tokens`, default 512) + 1. The pool routes to the **smallest loaded profile that fits**, then the least busy device, then round robin.
 
+Clients may set the optional top-level `min_context_tokens` on either
+`POST /v1/systemone` or `POST /v1/chat/completions` (including streaming chat).
+It must be a positive JSON integer no greater than the model's largest published
+context. Invalid values, including `null`, produce HTTP 400 `invalid_request`
+with `param: "min_context_tokens"`. The pool removes this field before counting
+or forwarding the payload. It is a capacity requirement, not additional input
+tokens or permission to exceed the model's context limit.
+
+Placement and retries require a loaded profile of at least
+`max(counted required context, min_context_tokens)`. The miner's job message still
+carries the actual counted `required_context_tokens`; no protocol change is needed.
+For example, a short Clef request with `"min_context_tokens": 8192` can run on
+`cuda-8192` or `cuda-16384`, but cannot run on `cuda-4096`.
+
+When only smaller miners currently serve the model, every request waits in the
+ordinary queue for sufficient capacity to free up or
+connect. `POOL_QUEUE_TIMEOUT_SECONDS` bounds that wait; expiry produces HTTP 503
+`queue_timeout` with the usual Retry-After. A waiting request does not block
+smaller requests behind it. This behavior applies with or without
+`min_context_tokens`. If nobody serves the model, requests fail fast with
+`no_miner_available`. A counted requirement beyond the model's largest published
+context is rejected before queueing with HTTP 400 `context_length_exceeded`.
+
+These requests consume the same queue limits and per-client admission reservations
+as other requests. Automatic queue capacities still use connected miner slots
+(including smaller profiles), not only slots eligible for a particular minimum.
+Full queues return `pool_overloaded`; per-client limits return `rate_limit_exceeded`.
+
 ## Jobs
 
 - pool → `job {job_id, attempt_id, model, model_revision, profile, operation, stream, input_tokens, required_context_tokens, timeout_ms, payload}`
@@ -53,6 +81,5 @@ OpenAI-shaped: `{"error": {"message", "type", "param", "code", "request_id", "re
 | 429 | `rate_limit_exceeded` | client has too many running and queued requests |
 | 502 | `miner_failed` | the miner failed and the retry is used up or was not allowed |
 | 503 | `no_miner_available` | no miner serves the model |
-| 503 | `context_unavailable` | the catalog allows the context, but no loaded profile does |
 | 503 | `pool_overloaded`, `queue_timeout`, `count_timeout` | capacity is temporarily exhausted |
 | 504 | `inference_timeout` | the request deadline passed |

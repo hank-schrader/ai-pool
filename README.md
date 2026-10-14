@@ -186,6 +186,29 @@ The installers add the binaries to your PATH (`~/.local/bin`, written to your sh
 
 Errors are OpenAI-shaped, with `code`, `request_id` and `retryable`; see [docs/protocol.md](docs/protocol.md).
 
+Both inference endpoints accept an optional top-level `min_context_tokens`: a
+positive integer up to the model's largest published context. It requires a
+miner with that much context or more, even for a shorter prompt. For example:
+
+```json
+{
+  "model": "clef",
+  "min_context_tokens": 8192,
+  "state": "Please refund the duplicate charge.",
+  "questions": {"refund": {"type": "noul", "instructions": "Is a refund requested?"}}
+}
+```
+
+The pool routes using the larger of this minimum and the actual required context
+(chat includes reserved output). It strips the field before token counting and
+inference. If only smaller miners serve the model, the request waits for a
+matching miner to connect or free up, subject to normal queue limits and
+`POOL_QUEUE_TIMEOUT_SECONDS` (503 `queue_timeout`), whether or not the minimum
+is supplied. No miner serving the model remains a fast 503 `no_miner_available`;
+invalid minimums return 400 `invalid_request` with `param: "min_context_tokens"`.
+A counted requirement beyond the model's largest published context returns
+400 `context_length_exceeded`.
+
 ## Model catalog
 
 `config/models.json` is validated at startup (`cargo run -- check-config`). Each model defines:

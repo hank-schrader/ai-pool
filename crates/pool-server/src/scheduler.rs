@@ -180,6 +180,12 @@ pub struct NewJob {
     pub required_context: u32,
 }
 
+impl NewJob {
+    fn routing_context(&self) -> u32 {
+        self.required_context.max(self.request.min_context_tokens.unwrap_or(0))
+    }
+}
+
 pub struct CountRequest {
     pub model: String,
     pub model_revision: String,
@@ -579,26 +585,12 @@ impl Scheduler {
     // ---- admission and dispatch -------------------------------------------------
 
     fn admit(&mut self, new: NewJob, events: mpsc::Sender<JobEvent>) -> Result<(), ApiError> {
-        let ready: Vec<u32> = self
+        if !self
             .miners
             .values()
-            .filter(|miner| !miner.draining)
-            .flat_map(|miner| miner.serves(&new.model, &new.model_revision).map(|m| m.context_tokens))
-            .collect();
-        if ready.is_empty() {
+            .any(|miner| !miner.draining && miner.serves(&new.model, &new.model_revision).next().is_some())
+        {
             return Err(ApiError::no_miner(&new.model));
-        }
-        let largest = ready.iter().copied().max().unwrap_or(0);
-        if largest < new.required_context {
-            return Err(ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "context_unavailable",
-                format!(
-                    "this request needs {} tokens of context; the largest loaded profile of {:?} has {largest}",
-                    new.required_context, new.model
-                ),
-            )
-            .retry_after(30));
         }
         let (client_active, client_queued) = self.tally.client(&new.client);
         let client_jobs = client_active + client_queued;
@@ -615,6 +607,7 @@ impl Scheduler {
 
         let now = Instant::now();
         let id = new.id.clone();
+        debug!(job = %id, required_context = new.required_context, routing_context = new.routing_context(), "queued");
         self.tally.enqueue(&new.client, &new.model);
         self.jobs.insert(
             id.clone(),
@@ -692,7 +685,7 @@ impl Scheduler {
             }
             for loaded in miner.serves(&job.new.model, &job.new.model_revision) {
                 let busy = miner.busy(&loaded.device);
-                if loaded.context_tokens >= job.new.required_context && busy < miner.slots(&loaded.device) {
+                if loaded.context_tokens >= job.new.routing_context() && busy < miner.slots(&loaded.device) {
                     candidates.push((
                         loaded.context_tokens,
                         busy,
@@ -735,7 +728,7 @@ impl Scheduler {
             return;
         }
         miner.attempts.insert(attempt.clone(), Attempt { job: Some(job_id.into()), device: device.into() });
-        debug!(job = %job_id, %attempt, %session, %profile, "dispatched");
+        debug!(job = %job_id, %attempt, %session, %profile, routing_context = job.new.routing_context(), "dispatched");
         job.attempts += 1;
         self.tally.activate(&job.new.client, &job.new.model);
         job.state = JobState::Dispatched {
@@ -945,7 +938,7 @@ impl Scheduler {
                     && !miner.draining
                     && miner
                         .serves(&job.new.model, &job.new.model_revision)
-                        .any(|loaded| loaded.context_tokens >= job.new.required_context)
+                        .any(|loaded| loaded.context_tokens >= job.new.routing_context())
             })
     }
 
@@ -1230,7 +1223,201 @@ fn completion_id(job: &Job) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Admission, Tally, retry_after};
+    use super::*;
+    use pool_protocol::{Accelerator, requests};
+
+    fn config() -> Config {
+        Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            catalog: "config/models.json".into(),
+            auth_mode: crate::config::AuthMode::Local,
+            client_api_keys: vec![],
+            miner_tokens: vec![],
+            miner_auth: crate::config::MinerAuth::Token,
+            max_miners: 256,
+            admin_token: None,
+            request_timeout: Duration::from_secs(20),
+            count_timeout: Duration::from_secs(5),
+            queue_timeout: Duration::from_secs(5),
+            dispatch_ack_timeout: Duration::from_secs(3),
+            first_chunk_timeout: Duration::from_secs(10),
+            queue_capacity_global: Some(64),
+            queue_capacity_per_model: Some(32),
+            max_active_per_client: Some(4),
+            max_queued_per_client: Some(8),
+            heartbeat: Duration::from_secs(10),
+            stream_buffer_events: 64,
+        }
+    }
+
+    fn scheduler() -> Scheduler {
+        let mut config = config();
+        config.queue_capacity_global = None;
+        config.queue_capacity_per_model = None;
+        Scheduler {
+            config,
+            catalog: Arc::new(Catalog::parse(include_str!("../../../config/models.json")).unwrap()),
+            miners: HashMap::new(),
+            jobs: HashMap::new(),
+            queue: VecDeque::new(),
+            tally: Tally::default(),
+            counts: HashMap::new(),
+            rotation: 0,
+            admission: Admission::new(Some(12)),
+        }
+    }
+
+    fn miner(scheduler: &mut Scheduler, session: &str, profile: &str) -> mpsc::Receiver<PoolMessage> {
+        let (outbound, receiver) = mpsc::channel(32);
+        scheduler.handle(Command::MinerConnected {
+            session: session.into(),
+            label: session.into(),
+            miner_id: session.into(),
+            outbound,
+            hardware: Hardware {
+                os: "test".into(),
+                arch: "test".into(),
+                accelerator: Accelerator::Cuda,
+                devices: vec![],
+            },
+        });
+        let model = scheduler.catalog.model("clef").unwrap();
+        let loaded = LoadedModel {
+            model: model.id.clone(),
+            model_revision: scheduler.catalog.model_revision(model),
+            profile: profile.into(),
+            device: "gpu0".into(),
+            context_tokens: model.profile(profile).unwrap().context_tokens,
+        };
+        scheduler.on_miner_message(
+            session,
+            MinerMessage::Capacity { devices: vec![DeviceSlots { id: "gpu0".into(), slots: 1 }], models: vec![loaded] },
+        );
+        receiver
+    }
+
+    fn job(scheduler: &Scheduler, id: &str, counted: u32, minimum: Option<u32>) -> NewJob {
+        let model = scheduler.catalog.model("clef").unwrap();
+        let mut body = json!({"state": "short", "questions": {"q": {"type": "noul", "instructions": "x"}}});
+        if let Some(minimum) = minimum {
+            body["min_context_tokens"] = minimum.into();
+        }
+        NewJob {
+            id: id.into(),
+            client: "client".into(),
+            model: model.id.clone(),
+            model_revision: scheduler.catalog.model_revision(model),
+            input_tokens: counted,
+            required_context: counted,
+            request: requests::validate(Operation::Systemone, model, body.as_object().unwrap().clone()).unwrap(),
+        }
+    }
+
+    #[test]
+    fn context_waits_skips_small_jobs_and_dispatches_on_capacity() {
+        for (counted, minimum) in [(100, Some(8192)), (5000, None)] {
+            let mut scheduler = scheduler();
+            let mut small = miner(&mut scheduler, "small", "cuda-4096");
+            let (events, _receiver) = mpsc::channel(1);
+            scheduler.admit(job(&scheduler, "waiting", counted, minimum), events.clone()).unwrap();
+            scheduler.pump();
+            assert!(small.try_recv().is_err());
+            assert_eq!(scheduler.queue.len(), 1);
+            scheduler.admit(job(&scheduler, "short", 100, None), events).unwrap();
+            scheduler.pump();
+            assert!(matches!(small.try_recv().unwrap(), PoolMessage::Job { job_id, .. } if job_id == "short"));
+            assert_eq!(scheduler.queue.len(), 1);
+            let mut large = miner(&mut scheduler, "large", "cuda-16384");
+            assert!(
+                matches!(large.try_recv().unwrap(), PoolMessage::Job { job_id, required_context_tokens, .. } if job_id == "waiting" && required_context_tokens == counted)
+            );
+            assert!(scheduler.queue.is_empty());
+            assert_eq!(scheduler.jobs["waiting"].new.routing_context(), counted.max(minimum.unwrap_or(0)));
+        }
+    }
+
+    #[test]
+    fn context_waits_and_times_out_with_or_without_a_minimum() {
+        for minimum in [None, Some(1), Some(8192)] {
+            let mut scheduler = scheduler();
+            let mut small = miner(&mut scheduler, "small", "cuda-4096");
+            let (events, mut receiver) = mpsc::channel(1);
+            scheduler.admit(job(&scheduler, "waiting", 5000, minimum), events).unwrap();
+            assert_eq!(scheduler.jobs["waiting"].new.routing_context(), 5000.max(minimum.unwrap_or(0)));
+            scheduler.pump();
+            assert!(small.try_recv().is_err());
+            scheduler.expire(Instant::now() + scheduler.config.queue_timeout + Duration::from_millis(1));
+            assert!(matches!(receiver.try_recv().unwrap(), JobEvent::Failed(error) if error.code == "queue_timeout"));
+            assert!(scheduler.jobs.is_empty());
+            scheduler.miners.clear();
+            let (events, _receiver) = mpsc::channel(1);
+            assert_eq!(
+                scheduler.admit(job(&scheduler, "empty", 100, minimum), events).unwrap_err().code,
+                "no_miner_available"
+            );
+        }
+    }
+
+    #[test]
+    fn minimum_context_retries_require_another_sufficient_profile() {
+        let mut scheduler = scheduler();
+        let _small = miner(&mut scheduler, "small", "cuda-4096");
+        let mut first = miner(&mut scheduler, "first", "cuda-8192");
+        let (events, _receiver) = mpsc::channel(1);
+        scheduler.admit(job(&scheduler, "retry", 100, Some(8192)), events).unwrap();
+        scheduler.pump();
+        assert!(matches!(first.try_recv().unwrap(), PoolMessage::Job { required_context_tokens: 100, .. }));
+        assert!(!scheduler.can_retry("retry", "first"));
+        let mut next = miner(&mut scheduler, "next", "cuda-16384");
+        assert!(scheduler.can_retry("retry", "first"));
+        scheduler.on_job_error("retry", "first", JobErrorCode::RuntimeFailed, "failed".into());
+        scheduler.pump();
+        assert!(
+            matches!(next.try_recv().unwrap(), PoolMessage::Job { profile, required_context_tokens: 100, .. } if profile == "cuda-16384")
+        );
+    }
+
+    #[test]
+    fn waiting_minimum_jobs_use_normal_queue_capacity_and_admission() {
+        let mut scheduler = scheduler();
+        let _small = miner(&mut scheduler, "small", "cuda-4096");
+        assert_eq!(scheduler.queue_capacities("clef"), (16, 16));
+        scheduler.config.max_active_per_client = None;
+        scheduler.config.max_queued_per_client = None;
+        for index in 0..16 {
+            let (events, _receiver) = mpsc::channel(1);
+            scheduler.admit(job(&scheduler, &format!("wait{index}"), 100, Some(8192)), events).unwrap();
+        }
+        let (events, _receiver) = mpsc::channel(1);
+        assert_eq!(
+            scheduler.admit(job(&scheduler, "full", 100, Some(8192)), events).unwrap_err().code,
+            "pool_overloaded"
+        );
+        scheduler.publish();
+        assert_eq!(scheduler.admission.reserve("other").err().unwrap().code, "pool_overloaded");
+    }
+
+    #[test]
+    fn minimum_context_dispatches_when_matching_capacity_frees() {
+        let mut scheduler = scheduler();
+        let mut large = miner(&mut scheduler, "large", "cuda-8192");
+        let (events, _receiver) = mpsc::channel(2);
+        scheduler.admit(job(&scheduler, "first", 100, Some(8192)), events.clone()).unwrap();
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = large.try_recv().unwrap() else { panic!("expected first job") };
+        scheduler.admit(job(&scheduler, "second", 100, Some(8192)), events).unwrap();
+        scheduler.pump();
+        assert!(large.try_recv().is_err());
+        assert_eq!(scheduler.queue.len(), 1);
+        scheduler.on_miner_message(
+            "large",
+            MinerMessage::Result {
+                attempt_id,
+                body: json!({"answers": {"q": {"noul": 0.9}}, "usage": {"input_tokens": 100}}),
+            },
+        );
+        assert!(matches!(large.try_recv().unwrap(), PoolMessage::Job { job_id, .. } if job_id == "second"));
+    }
 
     #[test]
     fn reservations_are_capped_per_client_and_released_on_drop() {

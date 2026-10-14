@@ -300,14 +300,177 @@ async fn routes_to_the_smallest_profile_that_fits() {
 }
 
 #[tokio::test]
-async fn context_unavailable_when_only_small_profiles_are_loaded() {
-    let addr = start(config()).await;
-    let (tx, _seen) = mpsc::unbounded_channel();
+async fn context_waits_until_queue_timeout_when_only_small_profiles_are_loaded() {
+    let mut configuration = config();
+    configuration.queue_timeout = Duration::from_millis(500);
+    let addr = start(configuration).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
     fake_miner(addr, "small", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
     wait_ready(addr, "clef", 1).await;
     let response = post(addr, "/v1/systemone", &clef_request(5000)).await;
     assert_eq!(response.status(), 503);
-    assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "context_unavailable");
+    assert_eq!(response.headers()["retry-after"], "5");
+    assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "queue_timeout");
+    assert!(jobs(&mut seen).is_empty());
+}
+
+#[tokio::test]
+async fn minimum_context_routes_both_endpoints_without_changing_miner_payloads() {
+    let addr = start(config()).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(
+        addr,
+        "small",
+        None,
+        &[("clef", "cuda-4096"), ("qwen2.5-1.5b-instruct", "cuda-4096")],
+        Behavior::Answer,
+        tx.clone(),
+    )
+    .await;
+    fake_miner(
+        addr,
+        "large",
+        None,
+        &[("clef", "cuda-8192"), ("qwen2.5-1.5b-instruct", "cuda-8192")],
+        Behavior::Answer,
+        tx,
+    )
+    .await;
+    wait_ready(addr, "clef", 2).await;
+    for (path, mut body, required) in
+        [("/v1/systemone", clef_request(100), 100), ("/v1/chat/completions", chat_request(100, false), 165)]
+    {
+        body["min_context_tokens"] = 8192.into();
+        assert_eq!(post(addr, path, &body).await.status(), 200);
+        let mut dispatched = 0;
+        while let Ok(event) = seen.try_recv() {
+            match event.message {
+                PoolMessage::CountTokens { payload, .. } => assert!(payload.get("min_context_tokens").is_none()),
+                PoolMessage::Job { profile, required_context_tokens, payload, .. } => {
+                    dispatched += 1;
+                    assert_eq!(event.miner, "large");
+                    assert_eq!(profile, "cuda-8192");
+                    assert_eq!(required_context_tokens, required);
+                    assert!(payload.get("min_context_tokens").is_none());
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(dispatched, 1);
+    }
+}
+
+#[tokio::test]
+async fn minimum_context_waits_for_a_new_miner_without_blocking_small_jobs() {
+    let mut configuration = config();
+    configuration.queue_capacity_global = None;
+    configuration.queue_capacity_per_model = None;
+    let addr = start(configuration).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "small", None, &[("clef", "cuda-4096")], Behavior::Answer, tx.clone()).await;
+    wait_ready(addr, "clef", 1).await;
+    let mut body = clef_request(100);
+    body["min_context_tokens"] = 8192.into();
+    let waiting = tokio::spawn(async move { post(addr, "/v1/systemone", &body).await });
+    // Observe preflight before checking that the request stays queued.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = seen.recv().await {
+            if matches!(event.message, PoolMessage::CountTokens { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(post(addr, "/v1/systemone", &clef_request(100)).await.status(), 200);
+    assert!(!waiting.is_finished());
+    assert_eq!(jobs(&mut seen), vec![("small", "cuda-4096".into())]);
+    fake_miner(addr, "large", None, &[("clef", "cuda-16384")], Behavior::Answer, tx).await;
+    let response = tokio::time::timeout(Duration::from_secs(3), waiting).await.unwrap().unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(jobs(&mut seen), vec![("large", "cuda-16384".into())]);
+}
+
+#[tokio::test]
+async fn counted_context_waits_for_a_new_miner_without_a_minimum() {
+    let mut configuration = config();
+    configuration.queue_capacity_global = None;
+    configuration.queue_capacity_per_model = None;
+    let addr = start(configuration).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "small", None, &[("clef", "cuda-4096")], Behavior::Answer, tx.clone()).await;
+    wait_ready(addr, "clef", 1).await;
+    let body = clef_request(5000);
+    let waiting = tokio::spawn(async move { post(addr, "/v1/systemone", &body).await });
+    // Observe preflight before checking that the request stays queued.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = seen.recv().await {
+            if matches!(event.message, PoolMessage::CountTokens { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(post(addr, "/v1/systemone", &clef_request(100)).await.status(), 200);
+    assert!(!waiting.is_finished());
+    assert_eq!(jobs(&mut seen), vec![("small", "cuda-4096".into())]);
+    fake_miner(addr, "large", None, &[("clef", "cuda-16384")], Behavior::Answer, tx).await;
+    let response = tokio::time::timeout(Duration::from_secs(3), waiting).await.unwrap().unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(jobs(&mut seen), vec![("large", "cuda-16384".into())]);
+}
+
+#[tokio::test]
+async fn minimum_context_times_out_and_missing_model_still_fails_fast() {
+    let mut configuration = config();
+    configuration.queue_timeout = Duration::from_millis(500);
+    let addr = start(configuration).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "small", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
+    wait_ready(addr, "clef", 1).await;
+    let mut body = clef_request(100);
+    body["min_context_tokens"] = 8192.into();
+    let response = post(addr, "/v1/systemone", &body).await;
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "queue_timeout");
+    assert!(jobs(&mut seen).is_empty());
+    for minimum in [None, Some(8192)] {
+        let mut body = chat_request(100, false);
+        if let Some(minimum) = minimum {
+            body["min_context_tokens"] = minimum.into();
+        }
+        let response = post(addr, "/v1/chat/completions", &body).await;
+        assert_eq!(response.status(), 503);
+        assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "no_miner_available");
+    }
+}
+
+#[tokio::test]
+async fn minimum_context_is_preserved_on_retry() {
+    let addr = start(config()).await;
+    let (tx, mut seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "small", None, &[("clef", "cuda-4096")], Behavior::Answer, tx.clone()).await;
+    fake_miner(addr, "flaky", None, &[("clef", "cuda-8192")], Behavior::DropAfterAccept, tx.clone()).await;
+    fake_miner(addr, "steady", None, &[("clef", "cuda-16384")], Behavior::Answer, tx).await;
+    wait_ready(addr, "clef", 3).await;
+    let mut body = clef_request(100);
+    body["min_context_tokens"] = 8192.into();
+    assert_eq!(post(addr, "/v1/systemone", &body).await.status(), 200);
+    assert_eq!(jobs(&mut seen), vec![("flaky", "cuda-8192".into()), ("steady", "cuda-16384".into())]);
+}
+
+#[tokio::test]
+async fn invalid_minimum_context_returns_400_with_the_parameter() {
+    let addr = start(config()).await;
+    for (path, mut body) in [("/v1/systemone", clef_request(100)), ("/v1/chat/completions", chat_request(100, false))] {
+        body["min_context_tokens"] = json!(0);
+        let response = post(addr, path, &body).await;
+        assert_eq!(response.status(), 400);
+        let error = response.json::<Value>().await.unwrap()["error"].clone();
+        assert_eq!(error["code"], "invalid_request");
+        assert_eq!(error["param"], "min_context_tokens");
+    }
 }
 
 #[tokio::test]
