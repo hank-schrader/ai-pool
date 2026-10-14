@@ -6,6 +6,7 @@ pub mod config;
 pub mod error;
 pub mod miners;
 pub mod scheduler;
+pub mod stats;
 
 use std::sync::{Arc, atomic::AtomicUsize};
 
@@ -62,6 +63,8 @@ impl AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(api::status_page))
+        .route("/v1/stats", get(api::stats))
         .route("/healthz", get(api::healthz))
         .route("/readyz", get(api::readyz))
         .route("/v1/models", get(api::list_models))

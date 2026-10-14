@@ -29,6 +29,8 @@ pool-miner --pool https://pool.example.com --token <miner token>   # token pool
 
 Status: `curl -H "Authorization: Bearer <admin token>" https://pool.example.com/admin/v1/status`.
 
+The pool also serves a public live status page at `/`, with totals from `/v1/stats`.
+
 To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
 
 Cloudflare's proxy (orange cloud) passes WebSockets and SSE through. Miners send a heartbeat every 10 s, which stays well inside Cloudflare's 100 s idle limit.

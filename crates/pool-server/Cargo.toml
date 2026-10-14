@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 pool-protocol.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -21,10 +21,13 @@ axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["trace", "limit"] }
 dotenvy = "0.15"
 sha2.workspace = true
+time = { version = "0.3", features = ["formatting"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite.workspace = true
 reqwest.workspace = true

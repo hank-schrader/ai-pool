@@ -67,6 +67,53 @@ Full queues return `pool_overloaded`; per-client limits return `rate_limit_excee
 
 A job is retried **once**, on a different miner, if its miner disconnects, fails with `runtime_failed`, `timeout` or `internal`, or does not acknowledge in time, and only before anything reached the client. A stream is committed by its first chunk. After that, a failure ends the client's SSE stream with an `error` event and no `[DONE]`, and output is never replayed. Rejections are re-queued up to three times without using up the retry.
 
+## Public status page and totals
+
+`GET /` serves the pool's live status page, and `GET /v1/stats` returns its JSON
+data. Both are public, including in `keys` mode; existing client, miner and admin
+routes keep their authentication requirements. The page uses no external
+resources, refreshes every 10 seconds, and retains its last data with an Offline
+indicator if a refresh fails. Its content security policy permits its inline
+script and styles and same-origin fetches; other resources are denied by default.
+
+`GET /v1/stats` sends `Cache-Control: public, max-age=5`. Its response contains
+only pool totals, with no miner or client identities:
+
+```json
+{
+  "updated_at": "2026-10-14T12:02:05Z",
+  "miners": 2,
+  "queued_questions": 3,
+  "answered_per_second": 0.5,
+  "answered_last_24h": 90,
+  "history": {
+    "interval_seconds": 60,
+    "end": "2026-10-14T12:01:00Z",
+    "answered": [60, 30],
+    "queued": [0, 3],
+    "miners": [2, 2]
+  }
+}
+```
+
+`miners` counts connected, non-draining sessions, even if they have not announced
+loaded models. `queued_questions` sums questions in jobs waiting for dispatch,
+including retries waiting again; parsing, token counting and active jobs are
+excluded. A systemone job contributes the number of entries in its `questions`
+object; a chat completion contributes one. Only successful job completions count,
+once per job regardless of retries. Streams count on successful completion.
+
+`answered_per_second` is questions answered in the rolling 60-second window
+divided by 60, using second buckets. History has one entry per completed UTC
+minute since startup, oldest first, capped at 1,440 entries. The first bucket can
+be a partial minute. `answered` counts successful answers during that minute;
+`queued` and `miners` sample the scheduler at its closing boundary. `end` is the
+start of the newest completed minute. Before the first boundary, arrays are empty
+and `end` names the preceding UTC minute. `answered_last_24h` sums only completed
+history buckets, so the current minute appears after it closes. All history is
+in memory and resets when the pool restarts. Bucket timing uses monotonic elapsed
+time anchored to UTC at startup.
+
 ## Client-facing errors
 
 OpenAI-shaped: `{"error": {"message", "type", "param", "code", "request_id", "retryable"}}`, plus an `x-request-id` header, and `retry-after` for temporary capacity errors.

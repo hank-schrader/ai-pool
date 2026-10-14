@@ -24,12 +24,16 @@ use pool_protocol::{
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::{Instant, MissedTickBehavior},
 };
 use tracing::{debug, info, warn};
 
-use crate::{config::Config, error::ApiError};
+use crate::{
+    config::Config,
+    error::ApiError,
+    stats::{Stats, StatsSnapshot},
+};
 
 /// Infrastructure retries after the first attempt.
 const MAX_RETRIES: u32 = 1;
@@ -229,6 +233,7 @@ enum Command {
 pub struct SchedulerHandle {
     commands: mpsc::UnboundedSender<Command>,
     admission: Arc<Admission>,
+    stats: watch::Receiver<StatsSnapshot>,
 }
 
 impl SchedulerHandle {
@@ -283,6 +288,11 @@ impl SchedulerHandle {
 
     pub fn cancel(&self, job_id: &str) {
         self.send(Command::Cancel { job_id: job_id.into() });
+    }
+
+    /// Reads published public totals without sending a scheduler command.
+    pub fn stats(&self) -> StatsSnapshot {
+        self.stats.borrow().clone()
     }
 
     pub async fn snapshot(&self) -> Snapshot {
@@ -425,6 +435,7 @@ struct PendingCount {
 struct Tally {
     clients: HashMap<String, (usize, usize)>,
     models: HashMap<String, usize>,
+    queued_questions: u64,
 }
 
 impl Tally {
@@ -437,13 +448,15 @@ impl Tally {
     }
 
     /// A job entered the queue (admitted, or sent back to it).
-    fn enqueue(&mut self, client: &str, model: &str) {
+    fn enqueue(&mut self, client: &str, model: &str, questions: u64) {
+        self.queued_questions += questions;
         self.clients.entry(client.to_owned()).or_default().1 += 1;
         *self.models.entry(model.to_owned()).or_default() += 1;
     }
 
     /// A queued job left the queue without being tracked any further.
-    fn dequeue(&mut self, client: &str, model: &str) {
+    fn dequeue(&mut self, client: &str, model: &str, questions: u64) {
+        self.queued_questions -= questions;
         let entry = self.clients.get_mut(client).expect("client has a queued job");
         entry.1 -= 1;
         if *entry == (0, 0) {
@@ -457,15 +470,15 @@ impl Tally {
     }
 
     /// A queued job was sent to a miner.
-    fn activate(&mut self, client: &str, model: &str) {
-        self.dequeue(client, model);
+    fn activate(&mut self, client: &str, model: &str, questions: u64) {
+        self.dequeue(client, model, questions);
         self.clients.entry(client.to_owned()).or_default().0 += 1;
     }
 
     /// A dispatched job went back to the queue.
-    fn deactivate(&mut self, client: &str, model: &str) {
+    fn deactivate(&mut self, client: &str, model: &str, questions: u64) {
         self.release_active(client);
-        self.enqueue(client, model);
+        self.enqueue(client, model, questions);
     }
 
     fn release_active(&mut self, client: &str) {
@@ -479,7 +492,7 @@ impl Tally {
     /// A job is being removed from the scheduler in its current state.
     fn forget(&mut self, job: &Job) {
         match job.state {
-            JobState::Queued => self.dequeue(&job.new.client, &job.new.model),
+            JobState::Queued => self.dequeue(&job.new.client, &job.new.model, job.new.request.question_count),
             JobState::Dispatched { .. } => self.release_active(&job.new.client),
         }
     }
@@ -495,6 +508,8 @@ pub struct Scheduler {
     counts: HashMap<String, PendingCount>,
     rotation: usize,
     admission: Arc<Admission>,
+    stats: Stats,
+    public_stats: watch::Sender<StatsSnapshot>,
 }
 
 pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
@@ -504,7 +519,11 @@ pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
         _ => None,
     };
     let admission = Admission::new(per_client);
+    let stats = Stats::new(Instant::now(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default());
+    let (public_stats, stats_receiver) = watch::channel(stats.snapshot(0, 0));
     let scheduler = Scheduler {
+        stats,
+        public_stats,
         admission: admission.clone(),
         config,
         catalog,
@@ -516,7 +535,7 @@ pub fn spawn(config: Config, catalog: Arc<Catalog>) -> SchedulerHandle {
         rotation: 0,
     };
     tokio::spawn(scheduler.run(receiver));
-    SchedulerHandle { commands, admission }
+    SchedulerHandle { commands, admission, stats: stats_receiver }
 }
 
 impl Scheduler {
@@ -537,11 +556,21 @@ impl Scheduler {
 
     /// Shows the queue fill to the handlers, which refuse early when it is full.
     fn publish(&self) {
+        self.public_stats.send_replace(self.stats.snapshot(self.tally.queued_questions, self.connected_miners()));
         self.admission.queue_len.store(self.queue.len(), Ordering::Relaxed);
         self.admission.queue_capacity.store(self.queue_capacities("").0, Ordering::Relaxed);
     }
 
+    fn connected_miners(&self) -> usize {
+        self.miners.values().filter(|miner| !miner.draining).count()
+    }
+
+    fn advance_stats(&mut self, now: Instant) {
+        self.stats.advance(now, self.tally.queued_questions, self.connected_miners());
+    }
+
     fn handle(&mut self, command: Command) {
+        self.advance_stats(Instant::now());
         match command {
             Command::MinerConnected { session, label, miner_id, hardware, outbound } => {
                 info!(%session, %label, %miner_id, accelerator = %hardware.accelerator, "miner connected");
@@ -608,7 +637,7 @@ impl Scheduler {
         let now = Instant::now();
         let id = new.id.clone();
         debug!(job = %id, required_context = new.required_context, routing_context = new.routing_context(), "queued");
-        self.tally.enqueue(&new.client, &new.model);
+        self.tally.enqueue(&new.client, &new.model, new.request.question_count);
         self.jobs.insert(
             id.clone(),
             Job {
@@ -730,7 +759,7 @@ impl Scheduler {
         miner.attempts.insert(attempt.clone(), Attempt { job: Some(job_id.into()), device: device.into() });
         debug!(job = %job_id, %attempt, %session, %profile, routing_context = job.new.routing_context(), "dispatched");
         job.attempts += 1;
-        self.tally.activate(&job.new.client, &job.new.model);
+        self.tally.activate(&job.new.client, &job.new.model, job.new.request.question_count);
         job.state = JobState::Dispatched {
             session: session.into(),
             attempt,
@@ -837,6 +866,7 @@ impl Scheduler {
             MinerMessage::Result { attempt_id, body } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
                     let job = self.remove_job(&job_id).expect("released job exists");
+                    self.stats.answered(job.new.request.question_count);
                     let profile = match &job.state {
                         JobState::Dispatched { profile, .. } => profile.clone(),
                         JobState::Queued => String::new(),
@@ -850,6 +880,7 @@ impl Scheduler {
             MinerMessage::StreamEnd { attempt_id, usage } => {
                 if let Some(job_id) = self.release(session, &attempt_id) {
                     let job = self.remove_job(&job_id).expect("released job exists");
+                    self.stats.answered(job.new.request.question_count);
                     if job.new.request.include_usage
                         && let Some(usage) = usage
                     {
@@ -948,7 +979,7 @@ impl Scheduler {
         if retry {
             job.excluded.insert(session.into());
             job.state = JobState::Queued;
-            self.tally.deactivate(&job.new.client, &job.new.model);
+            self.tally.deactivate(&job.new.client, &job.new.model, job.new.request.question_count);
             self.queue.push_front(job_id.into());
             return;
         }
@@ -977,7 +1008,7 @@ impl Scheduler {
         let job = self.jobs.get_mut(job_id).expect("released job exists");
         job.excluded.insert(session.into());
         job.state = JobState::Queued;
-        self.tally.deactivate(&job.new.client, &job.new.model);
+        self.tally.deactivate(&job.new.client, &job.new.model, job.new.request.question_count);
         self.queue.push_front(job_id.into());
     }
 
@@ -1044,7 +1075,7 @@ impl Scheduler {
                 let job = self.jobs.get_mut(&job_id).expect("checked above");
                 job.excluded.insert(session.into());
                 job.state = JobState::Queued;
-                self.tally.deactivate(&job.new.client, &job.new.model);
+                self.tally.deactivate(&job.new.client, &job.new.model, job.new.request.question_count);
                 self.queue.push_front(job_id);
             } else {
                 self.fail(&job_id, ApiError::miner_failed(format!("{reason} during inference")));
@@ -1061,6 +1092,7 @@ impl Scheduler {
     }
 
     fn expire(&mut self, now: Instant) {
+        self.advance_stats(now);
         let liveness = self.config.heartbeat * 3;
         let silent: Vec<String> = self
             .miners
@@ -1135,6 +1167,15 @@ impl Scheduler {
         {
             let (active, queued) = self.tally.clients.values().fold((0, 0), |a, c| (a.0 + c.0, a.1 + c.1));
             debug_assert_eq!(queued, self.queue.len(), "queued counter drifted");
+            debug_assert_eq!(
+                self.tally.queued_questions,
+                self.jobs
+                    .values()
+                    .filter(|job| matches!(job.state, JobState::Queued))
+                    .map(|job| job.new.request.question_count)
+                    .sum::<u64>(),
+                "queued question counter drifted"
+            );
             debug_assert_eq!(active + queued, self.jobs.len(), "job counter drifted");
             debug_assert_eq!(self.tally.models.values().sum::<usize>(), queued, "model counter drifted");
             debug_assert!(self.tally.clients.values().all(|c| *c != (0, 0)));
@@ -1254,7 +1295,11 @@ mod tests {
         let mut config = config();
         config.queue_capacity_global = None;
         config.queue_capacity_per_model = None;
+        let stats = Stats::new(Instant::now(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default());
+        let (public_stats, _) = watch::channel(stats.snapshot(0, 0));
         Scheduler {
+            stats,
+            public_stats,
             config,
             catalog: Arc::new(Catalog::parse(include_str!("../../../config/models.json")).unwrap()),
             miners: HashMap::new(),
@@ -1461,17 +1506,81 @@ mod tests {
     #[test]
     fn tally_follows_a_job_and_drops_empty_entries() {
         let mut tally = Tally::default();
-        tally.enqueue("c", "m");
-        tally.enqueue("c", "m");
+        tally.enqueue("c", "m", 3);
+        tally.enqueue("c", "m", 3);
+        assert_eq!(tally.queued_questions, 6);
         assert_eq!(tally.client("c"), (0, 2));
         assert_eq!(tally.model_queued("m"), 2);
-        tally.activate("c", "m");
+        tally.activate("c", "m", 3);
+        assert_eq!(tally.queued_questions, 3);
         assert_eq!((tally.client("c"), tally.model_queued("m")), ((1, 1), 1));
-        tally.deactivate("c", "m");
+        tally.deactivate("c", "m", 3);
+        assert_eq!(tally.queued_questions, 6);
         assert_eq!((tally.client("c"), tally.model_queued("m")), ((0, 2), 2));
-        tally.activate("c", "m");
+        tally.activate("c", "m", 3);
         tally.release_active("c");
-        tally.dequeue("c", "m");
+        tally.dequeue("c", "m", 3);
+        assert_eq!(tally.queued_questions, 0);
         assert!(tally.clients.is_empty() && tally.models.is_empty());
+    }
+
+    #[test]
+    fn public_stats_sample_waiting_questions_and_exclude_draining_miners() {
+        let mut scheduler = scheduler();
+        let now = Instant::now();
+        scheduler.stats = Stats::new(now, Duration::from_secs(120));
+        let _small = miner(&mut scheduler, "small", "cuda-4096");
+        let _draining = miner(&mut scheduler, "draining", "cuda-4096");
+        scheduler.on_miner_message("draining", MinerMessage::Draining);
+        let (events, _receiver) = mpsc::channel(1);
+        let mut waiting = job(&scheduler, "waiting", 100, Some(8192));
+        waiting.request.question_count = 3;
+        scheduler.admit(waiting, events).unwrap();
+        scheduler.pump();
+        scheduler.advance_stats(now + Duration::from_secs(60));
+        scheduler.publish();
+        let snapshot = scheduler.public_stats.borrow().clone();
+        assert_eq!(snapshot.queued_questions, 3);
+        assert_eq!(snapshot.miners, 1);
+        assert_eq!(snapshot.history.queued, [3]);
+        assert_eq!(snapshot.history.miners, [1]);
+        scheduler.drop_job("waiting", None);
+        scheduler.publish();
+        assert_eq!(scheduler.public_stats.borrow().queued_questions, 0);
+    }
+
+    #[test]
+    fn only_successful_jobs_count_once_after_a_retry() {
+        let mut scheduler = scheduler();
+        let now = Instant::now();
+        scheduler.stats = Stats::new(now, Duration::from_secs(120));
+        let mut first = miner(&mut scheduler, "first", "cuda-8192");
+        let (events, _receiver) = mpsc::channel(1);
+        let mut request = job(&scheduler, "retry", 100, None);
+        request.request.question_count = 3;
+        scheduler.admit(request, events).unwrap();
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id: failed_attempt, .. } = first.try_recv().unwrap() else {
+            panic!("expected first attempt")
+        };
+        let mut second = miner(&mut scheduler, "second", "cuda-8192");
+        scheduler.on_miner_message(
+            "first",
+            MinerMessage::JobError {
+                attempt_id: failed_attempt,
+                code: JobErrorCode::RuntimeFailed,
+                message: "failed".into(),
+            },
+        );
+        assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, 0.0);
+        let PoolMessage::Job { attempt_id, .. } = second.try_recv().unwrap() else { panic!("expected retry") };
+        let result = MinerMessage::Result { attempt_id, body: json!({"answers": {}}) };
+        scheduler.on_miner_message("second", result.clone());
+        scheduler.on_miner_message("second", result);
+        assert_eq!(scheduler.stats.snapshot(0, 0).answered_per_second, 3.0 / 60.0);
+        scheduler.advance_stats(now + Duration::from_secs(60));
+        let snapshot = scheduler.stats.snapshot(0, 0);
+        assert_eq!(snapshot.answered_last_24h, 3);
+        assert_eq!(snapshot.history.answered, [3]);
     }
 }

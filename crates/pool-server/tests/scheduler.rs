@@ -47,6 +47,10 @@ fn config() -> Config {
 
 async fn start(config: Config) -> SocketAddr {
     let state = AppState::new(config, Catalog::parse(CATALOG).unwrap());
+    start_with_state(state).await
+}
+
+async fn start_with_state(state: AppState) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
@@ -706,4 +710,33 @@ async fn a_device_runs_as_many_jobs_at_once_as_its_profile_has_slots() {
     for task in pending {
         task.abort();
     }
+}
+
+#[tokio::test]
+async fn completed_multi_question_jobs_increment_public_answered_totals() {
+    let state = AppState::new(config(), Catalog::parse(CATALOG).unwrap());
+    let scheduler = state.scheduler.clone();
+    let addr = start_with_state(state).await;
+    let (tx, _seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "answering", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
+    wait_ready(addr, "clef", 1).await;
+    let request = json!({"model": "clef", "state": "tokens:100", "questions": {
+        "q": {"type": "noul", "instructions": "one"},
+        "r": {"type": "noul", "instructions": "two"},
+        "s": {"type": "noul", "instructions": "three"}
+    }});
+    assert_eq!(post(addr, "/v1/systemone", &request).await.status(), 200);
+    let url = format!("http://{addr}/v1/stats");
+    let stats: Value = reqwest::get(&url).await.unwrap().json().await.unwrap();
+    assert_eq!(stats["answered_per_second"], 3.0 / 60.0);
+    assert_eq!(stats["queued_questions"], 0);
+
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    scheduler.snapshot().await;
+    tokio::time::resume();
+    let stats: Value = reqwest::get(&url).await.unwrap().json().await.unwrap();
+    assert_eq!(stats["answered_last_24h"], 3);
+    assert_eq!(stats["history"]["answered"].as_array().unwrap().iter().map(|n| n.as_u64().unwrap()).sum::<u64>(), 3);
+    assert_eq!(stats["answered_per_second"], 0.0);
 }

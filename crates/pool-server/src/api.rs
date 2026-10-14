@@ -6,9 +6,9 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header as headers},
     response::{
-        IntoResponse, Response,
+        Html, IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
 };
@@ -21,6 +21,7 @@ use crate::{
     AppState,
     error::ApiError,
     scheduler::{CountRequest, JobEvent, JobGuard, ModelAvailability, NewJob},
+    stats::StatsSnapshot,
 };
 
 /// Upper bound for reading a request body.
@@ -28,6 +29,18 @@ pub const MAX_BODY_BYTES: usize = 16 << 20;
 
 pub async fn healthz() -> &'static str {
     "ok"
+}
+
+pub async fn status_page() -> Response {
+    (
+        [(headers::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")],
+        Html(include_str!("../static/index.html")),
+    )
+        .into_response()
+}
+
+pub async fn stats(State(state): State<AppState>) -> impl IntoResponse {
+    ([(headers::CACHE_CONTROL, "public, max-age=5")], Json::<StatsSnapshot>(state.scheduler.stats()))
 }
 
 pub async fn readyz(State(state): State<AppState>) -> Json<Value> {

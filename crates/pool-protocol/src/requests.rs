@@ -29,6 +29,8 @@ impl RequestError {
 #[derive(Debug, Clone)]
 pub struct Validated {
     pub operation: Operation,
+    /// Questions counted once when the job completes successfully.
+    pub question_count: u64,
     pub stream: bool,
     /// Client asked for the final usage chunk of a stream.
     pub include_usage: bool,
@@ -177,9 +179,11 @@ fn systemone(model: &Model, mut body: Map<String, Value>) -> Result<Validated, R
             }
         }
     }
+    let question_count = questions.len() as u64;
     let payload = json!({ "state": state, "questions": questions });
     Ok(Validated {
         operation: Operation::Systemone,
+        question_count,
         stream: false,
         include_usage: false,
         output_tokens: 0,
@@ -287,6 +291,7 @@ fn chat(model: &Model, mut body: Map<String, Value>) -> Result<Validated, Reques
 
     Ok(Validated {
         operation: Operation::ChatCompletions,
+        question_count: 1,
         stream,
         include_usage,
         output_tokens,
