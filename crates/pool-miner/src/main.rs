@@ -1,5 +1,6 @@
 //! `pool-miner`: serves models from the ai-pool catalog on this machine's GPU.
 
+mod bench;
 mod commands;
 mod connection;
 mod hardware;
@@ -34,16 +35,16 @@ pub struct Cli {
     /// Read the catalog from this file instead of the pool (offline commands).
     #[arg(long, global = true)]
     catalog: Option<PathBuf>,
-    /// Models to serve, comma-separated (default: choose interactively).
+    /// Models to serve or benchmark, comma-separated (default: choose interactively).
     #[arg(long, value_delimiter = ',', global = true)]
     models: Vec<String>,
     /// Allow downloads without asking.
     #[arg(long, global = true)]
     yes: bool,
-    /// Force a profile: MODEL=PROFILE_ID (repeatable).
+    /// Select a profile: MODEL=PROFILE_ID (repeatable; bench tests only this profile).
     #[arg(long = "profile", value_name = "MODEL=PROFILE", global = true)]
     profiles: Vec<String>,
-    /// Force a context size: MODEL=TOKENS, must be a catalog profile (repeatable).
+    /// Select a published context: MODEL=TOKENS (repeatable; bench tests matching placements).
     #[arg(long = "context", value_name = "MODEL=TOKENS", global = true)]
     contexts: Vec<String>,
     /// GPU index to serve from (default: the first).
@@ -75,6 +76,18 @@ enum Command {
     Run,
     /// Show the pool's models and which profiles fit this machine.
     ListModels,
+    /// Benchmark runnable catalog profiles locally, without serving the pool.
+    Bench {
+        /// Submit work for this many seconds per profile, then drain outstanding requests.
+        #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..))]
+        duration: u64,
+        /// Seed for the synthetic workload.
+        #[arg(long, default_value_t = 20261012)]
+        seed: u64,
+        /// Write the complete benchmark report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Download (or import) model weights into the cache.
     Download {
         #[arg(required = true)]
@@ -114,6 +127,7 @@ async fn main() -> ExitCode {
     let result = match &cli.command {
         None | Some(Command::Run) => run(&cli).await,
         Some(Command::ListModels) => commands::list_models(&cli).await,
+        Some(Command::Bench { duration, seed, json }) => bench::run(&cli, *duration, *seed, *json).await,
         Some(Command::Download { models, import }) => commands::download(&cli, models, import.as_deref()).await,
         Some(Command::Doctor) => commands::doctor(&cli).await,
         Some(Command::Cache { action }) => match action {
@@ -180,7 +194,8 @@ impl Cli {
         if !ui::interactive() {
             return Err("no terminal to choose models; pass --models (see `pool-miner list-models`)".into());
         }
-        commands::choose_models(catalog, machine)
+        let purpose = if matches!(self.command, Some(Command::Bench { .. })) { "benchmark" } else { "serve" };
+        commands::choose_models(catalog, machine, purpose)
     }
 }
 

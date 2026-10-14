@@ -235,6 +235,44 @@ fn ids(profiles: &[&Profile]) -> String {
     profiles.iter().map(|profile| profile.id.as_str()).collect::<Vec<_>>().join(", ")
 }
 
+/// Benchmarks prefer fitting full-GPU profiles unless placements are explicitly
+/// selected. Offload follows when none fits; RAM fallback is the last resort.
+pub fn benchmark_choices<'a>(
+    model: &'a Model,
+    accelerator: Accelerator,
+    budget_mib: u64,
+    ram_budget_mib: u64,
+    override_: Option<&Override>,
+) -> Result<Vec<Choice<'a>>, String> {
+    let profiles = model.profiles_for(accelerator);
+    let mut choices: Vec<_> = profiles
+        .iter()
+        .filter(|profile| Placement::Published.fits(profile, budget_mib, ram_budget_mib))
+        .map(|&profile| Choice { model, profile, placement: Placement::Published })
+        .collect();
+    match override_ {
+        Some(Override::Profile(id)) => {
+            let overrides = HashMap::from([(model.id.clone(), Override::Profile(id.clone()))]);
+            return plan(&[model], accelerator, budget_mib, ram_budget_mib, &overrides);
+        }
+        Some(Override::Context(tokens)) => {
+            choices.retain(|choice| choice.profile.context_tokens == *tokens);
+            if choices.is_empty() {
+                let overrides = HashMap::from([(model.id.clone(), Override::Context(*tokens))]);
+                return plan(&[model], accelerator, budget_mib, ram_budget_mib, &overrides);
+            }
+        }
+        None if choices.is_empty() => return plan(&[model], accelerator, budget_mib, ram_budget_mib, &HashMap::new()),
+        None => {
+            if choices.iter().any(|choice| !choice.profile.offloaded()) {
+                choices.retain(|choice| !choice.profile.offloaded());
+            }
+        }
+    }
+    choices.sort_by_key(|choice| (choice.profile.context_tokens, choice.profile.slots(), choice.profile.preference()));
+    Ok(choices)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +419,52 @@ mod tests {
         let mut large = clef.clone();
         large.weights.size_bytes = u64::MAX;
         assert!(ram_fallback(&large, profile).unwrap().host_memory_mib(profile) > 1 << 40);
+    }
+
+    #[test]
+    fn benchmarks_include_all_fitting_placements_and_respect_filters() {
+        let catalog = catalog();
+        let clef = catalog.model("clef").unwrap();
+        let all = benchmark_choices(clef, Accelerator::Cuda, 20000, 40000, None).unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().all(|choice| !choice.profile.offloaded()));
+        let offload = benchmark_choices(clef, Accelerator::Cuda, 7800, 40000, None).unwrap();
+        assert!(!offload.is_empty());
+        assert!(offload.iter().all(|choice| choice.profile.offloaded()));
+        assert_eq!(
+            offload.len(),
+            clef.profiles_for(Accelerator::Cuda).iter().filter(|profile| profile.memory_mib <= 7800).count()
+        );
+        let selected = benchmark_choices(
+            clef,
+            Accelerator::Cuda,
+            20000,
+            40000,
+            Some(&Override::Profile("cuda-4096-gpu16".into())),
+        )
+        .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].profile.id, "cuda-4096-gpu16");
+        let short = benchmark_choices(clef, Accelerator::Cuda, 20000, 40000, Some(&Override::Context(4096))).unwrap();
+        assert_eq!(short.len(), 5);
+        assert!(short.iter().all(|choice| choice.profile.context_tokens == 4096));
+        let full = benchmark_choices(clef, Accelerator::Cuda, 20000, 0, None).unwrap();
+        assert_eq!(full.len(), 3);
+        assert!(full.iter().all(|choice| !choice.profile.offloaded()));
+        assert!(benchmark_choices(clef, Accelerator::Cuda, 20000, 40000, Some(&Override::Context(5000))).is_err());
+
+        let h2o = catalog.model("h2o").unwrap();
+        let ram = benchmark_choices(h2o, Accelerator::Cuda, 2304, 19000, None).unwrap();
+        assert_eq!(ram.len(), 1);
+        assert_eq!(ram[0].profile.id, "cuda-8192");
+        assert_ne!(ram[0].placement, Placement::Published);
+        let slots = benchmark_choices(h2o, Accelerator::Cuda, 15000, 19000, Some(&Override::Context(40960))).unwrap();
+        assert_eq!(slots.iter().map(|choice| choice.profile.slots()).collect::<Vec<_>>(), [3, 4]);
+        let forced =
+            benchmark_choices(h2o, Accelerator::Cuda, 6000, 19000, Some(&Override::Profile("cuda-40960-x3".into())))
+                .unwrap();
+        assert_eq!(forced.len(), 1);
+        assert_eq!(forced[0].profile.id, "cuda-40960-x3");
+        assert_ne!(forced[0].placement, Placement::Published);
     }
 }

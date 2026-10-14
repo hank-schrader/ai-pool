@@ -43,7 +43,7 @@ fn fits(model: &Model, machine: &Machine) -> String {
     }
 }
 
-pub fn choose_models<'a>(catalog: &'a Catalog, machine: &Machine) -> Result<Vec<&'a Model>, String> {
+pub fn choose_models<'a>(catalog: &'a Catalog, machine: &Machine, purpose: &str) -> Result<Vec<&'a Model>, String> {
     let items: Vec<String> = catalog
         .models
         .iter()
@@ -59,7 +59,7 @@ pub fn choose_models<'a>(catalog: &'a Catalog, machine: &Machine) -> Result<Vec<
         .collect();
     let defaults: Vec<bool> = catalog.models.iter().map(|model| catalog.default_models.contains(&model.id)).collect();
     let picked = dialoguer::MultiSelect::new()
-        .with_prompt("Models to serve (space toggles, enter confirms)")
+        .with_prompt(format!("Models to {purpose} (space toggles, enter confirms)"))
         .items(&items)
         .defaults(&defaults)
         .interact()

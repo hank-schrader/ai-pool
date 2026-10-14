@@ -270,11 +270,7 @@ impl Miner {
             .iter()
             .filter_map(|hosted| {
                 let slots = hosted.ready()?.profile.slots();
-                let prefetch = match hosted.model.backend {
-                    Backend::LlamaServerH2o => self.prefetch.get().copied().unwrap_or(slots),
-                    _ => 0,
-                };
-                Some(slots + prefetch)
+                Some(job_slots(hosted.model.backend, slots, self.prefetch.get().copied()))
             })
             .min()
             .unwrap_or(1)
@@ -426,6 +422,13 @@ impl Miner {
             handle.abort();
             let _ = handle.await;
         }
+    }
+}
+
+pub fn job_slots(backend: Backend, slots: u32, prefetch: Option<u32>) -> u32 {
+    match backend {
+        Backend::LlamaServerH2o => slots.saturating_add(prefetch.unwrap_or(slots)),
+        _ => 1,
     }
 }
 

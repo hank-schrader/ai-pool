@@ -237,6 +237,44 @@ pub async fn start(
         prepared.push((choice, weights));
     }
 
+    start_prepared(catalog, &prepared, &runtimes, machine, options, false).await
+}
+
+pub struct Prepared {
+    runtime: InstalledRuntime,
+    weights: PathBuf,
+}
+
+pub async fn prepare(
+    catalog: &Catalog,
+    model: &Model,
+    machine: &Machine,
+    options: &Options,
+) -> Result<Prepared, String> {
+    let runtime = install_runtime(catalog, model, machine, options).await?;
+    let weights = ensure_weights(&options.cache, model).await?;
+    Ok(Prepared { runtime, weights })
+}
+
+pub async fn start_exact(
+    catalog: &Catalog,
+    choice: &Choice<'_>,
+    prepared: &Prepared,
+    machine: &Machine,
+    options: &Options,
+) -> Result<Running, String> {
+    let runtimes = HashMap::from([(choice.model.runtime.clone(), prepared.runtime.clone())]);
+    start_prepared(catalog, &[(choice, prepared.weights.clone())], &runtimes, machine, options, true).await
+}
+
+async fn start_prepared(
+    catalog: &Catalog,
+    prepared: &[(&Choice<'_>, PathBuf)],
+    runtimes: &HashMap<String, InstalledRuntime>,
+    machine: &Machine,
+    options: &Options,
+    exact: bool,
+) -> Result<Running, String> {
     let (changes_tx, changes) = watch::channel(0u64);
     let shutdown = CancellationToken::new();
     let mut models = Vec::new();
@@ -247,14 +285,14 @@ pub async fn start(
         let commit = &catalog.runtime(&model.runtime).expect("validated").llama_cpp_commit;
         let counter = match model.backend {
             Backend::LlamaServerSystemone => {
-                Some(start_counter(options.clef_helper.as_deref(), &weights, commit).await?)
+                Some(start_counter(options.clef_helper.as_deref(), weights, commit).await?)
             }
             Backend::LlamaServerChat | Backend::LlamaServerH2o => None,
         };
         let launch = LaunchSpec {
             label: model.id.clone(),
             server: runtime.server.clone(),
-            weights,
+            weights: weights.clone(),
             backend: model.backend,
             context_tokens: choice.profile.context_tokens,
             slots: choice.profile.slots(),
@@ -264,27 +302,12 @@ pub async fn start(
             cuda_device: machine.cuda_device(),
         };
         let in_use = options.cache.hold_model(&model.weights).map_err(|error| error.to_string())?;
-        // a forced profile is kept as is; a planned one may step down to profiles
-        // that need less accelerator memory (and fit RAM) if its probe fails
-        let profiles: Vec<_> = if options.overrides.contains_key(&model.id) || choice.placement != Placement::Published
-        {
-            vec![(choice.profile.clone(), choice.placement)]
-        } else {
-            let mut fallback: Vec<_> = model
-                .profiles_for(machine.accelerator)
-                .into_iter()
-                .filter(|profile| {
-                    profile.id == choice.profile.id
-                        || (profile.memory_mib < choice.profile.memory_mib
-                            && profile.host_memory_mib.unwrap_or(0) <= machine.ram_budget_mib)
-                })
-                .cloned()
-                .collect();
-            fallback.sort_by_key(|profile| std::cmp::Reverse(profile.preference()));
-            // the planned profile first, even if a fallback ranks higher
-            fallback.sort_by_key(|profile| profile.id != choice.profile.id);
-            fallback.into_iter().map(|profile| (profile, Placement::Published)).collect()
-        };
+        let profiles = startup_profiles(
+            choice,
+            machine.accelerator,
+            machine.ram_budget_mib,
+            exact || options.overrides.contains_key(&model.id),
+        );
         let hosted = Arc::new(Hosted::new(
             model.clone(),
             catalog.model_revision(model),
@@ -300,9 +323,57 @@ pub async fn start(
     Ok(Running { models, changes, shutdown, supervisors })
 }
 
+// Exact benchmark choices and forced profiles never step down after a failed probe.
+fn startup_profiles(
+    choice: &Choice<'_>,
+    accelerator: pool_protocol::Accelerator,
+    ram_budget_mib: u64,
+    exact: bool,
+) -> Vec<(pool_protocol::Profile, Placement)> {
+    if exact || choice.placement != Placement::Published {
+        return vec![(choice.profile.clone(), choice.placement)];
+    }
+    let mut fallback: Vec<_> = choice
+        .model
+        .profiles_for(accelerator)
+        .into_iter()
+        .filter(|profile| {
+            profile.id == choice.profile.id
+                || (profile.memory_mib < choice.profile.memory_mib
+                    && profile.host_memory_mib.unwrap_or(0) <= ram_budget_mib)
+        })
+        .cloned()
+        .collect();
+    fallback.sort_by_key(|profile| std::cmp::Reverse(profile.preference()));
+    fallback.sort_by_key(|profile| profile.id != choice.profile.id);
+    fallback.into_iter().map(|profile| (profile, Placement::Published)).collect()
+}
+
 async fn start_counter(explicit: Option<&Path>, weights: &Path, commit: &str) -> Result<ClefCounter, String> {
     let path = helper::locate(explicit).map_err(|error| error.to_string())?;
     let counter = ClefCounter::start(path, weights.to_path_buf(), commit).await.map_err(|error| error.to_string())?;
     tracing::info!("Clef token counter: {}", counter.path().display());
     Ok(counter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pool_protocol::Accelerator;
+
+    #[test]
+    fn exact_startup_preserves_profile_and_placement_without_step_down() {
+        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let model = catalog.model("h2o").unwrap();
+        let choice =
+            Choice { model, profile: model.profile("cuda-40960-x4").unwrap(), placement: Placement::Published };
+        assert!(startup_profiles(&choice, Accelerator::Cuda, 20000, false).len() > 1);
+        let exact = startup_profiles(&choice, Accelerator::Cuda, 20000, true);
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].0.id, "cuda-40960-x4");
+        let ram = Choice { placement: plan::ram_fallback(model, choice.profile).unwrap(), ..choice };
+        let exact = startup_profiles(&ram, Accelerator::Cuda, 20000, true);
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].1, ram.placement);
+    }
 }

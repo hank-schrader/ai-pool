@@ -37,6 +37,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct Ready {
     pub client: LocalClient,
     pub profile: Profile,
+    pub pid: Option<u32>,
     /// H2O models only: the verified-label engine that renders and answers questions.
     pub h2o: Option<H2o>,
 }
@@ -209,7 +210,12 @@ impl Hosted {
                             profile.context_tokens,
                             started.elapsed().as_secs_f64()
                         );
-                        hosted.ready.send_replace(Some(Ready { client: server.client().clone(), profile, h2o }));
+                        hosted.ready.send_replace(Some(Ready {
+                            client: server.client().clone(),
+                            profile,
+                            pid: server.pid(),
+                            h2o,
+                        }));
                         changes.send_modify(|n| *n += 1);
                         let reason = loop {
                             tokio::select! {

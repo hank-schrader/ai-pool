@@ -86,6 +86,53 @@ a 16 GB RTX 5070 Ti that gives `clef` at 8192 and `qwen2.5-1.5b-instruct` at
 CUDA so far. On Windows and macOS, pass `--allow-unqualified-runtime` until
 those platforms have been tested (`docs/qualification/`).
 
+## Benchmarking a miner
+
+```sh
+pool-miner bench --models h2o,qwen2.5-1.5b-instruct --duration 60 --seed 20261012 --yes
+# Offline catalog; imported or cached weights use the same verified cache:
+pool-miner bench --catalog config/models.json --models h2o --json
+```
+
+Without `--models`, choose models interactively. Bench fetches only the catalog
+from `--pool`, then runs each fitting profile separately without a pool session.
+When a full-GPU profile fits, bench skips that model's published offload profiles.
+Otherwise it tests fitting offload profiles, or uses automatic RAM fallback when
+no published placement fits. `--profile MODEL=ID`
+narrows the test to one profile; `--context MODEL=TOKENS` tests every fitting
+published placement at that context. Downloads ask for confirmation unless
+`--yes` is set. Import weights first with `pool-miner download MODEL --import FILE`.
+
+The seeded workload uses the same sequence of synthetic records at every
+profile: 40% target 300–1,500 tokens, 30% 1,500–4,000, 20% 4,000–12,000,
+and 10% 12,000–40,000. Lengths approximate four bytes per token. Records carry
+1–8 `noul`/`choice` questions per systemone request, or request short chat responses.
+Exact token counting trims records to fit each profile, leaving room for
+templates and chat output. Concurrency
+matches the miner: H2O slots plus prefetch (`--prefetch`), one job for Clef/chat.
+One concurrency wave warms up each profile before measurement. The default
+60 seconds admits work, then outstanding requests drain with a 150-second
+timeout per request. Rates use actual elapsed measurement time, including drain.
+
+The final table shows:
+
+- **Model / Profile / Place / Jobs**: abbreviated model, published profile ID,
+  GPU/offload/automatic RAM fallback, and requests allowed in flight.
+- **Req/s / Q/s**: successful requests and systemone questions per second.
+- **In/s / Out/s**: prompt and chat generated tokens per second, from response
+  usage; H2O prompt usage sums all question prompts, including reported prefixes.
+- **p50 s / p95 s / Err**: successful request latency including runtime queueing,
+  excluding preparation and warm-up, and failed/timed-out requests.
+- **VRAM / RSS**: sampled runtime PID peaks in MiB, including warm-up and drain;
+  unavailable readings show `—`. Samples are taken every 500 ms.
+
+Fewer than ten completed requests produces a small-sample warning. Failed
+profiles remain in the report and make the command exit unsuccessfully.
+`--json` writes one report to stdout, including full names, settings, raw counts,
+error breakdowns, warnings, runtime revisions, unavailable-reading reasons, and
+the benchmark process's separate peak RSS. The human table and progress go to
+stderr when using `--json`; stdout remains one JSON document.
+
 ## Serving other machines
 
 Local mode (the default) has no credentials and only listens on loopback. To accept remote clients and miners:

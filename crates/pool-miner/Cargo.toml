@@ -22,3 +22,6 @@ clap.workspace = true
 dialoguer = { version = "0.12", default-features = false }
 indicatif = "0.18"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
