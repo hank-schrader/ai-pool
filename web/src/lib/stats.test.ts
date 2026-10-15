@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseRest, parseSnapshot, parseTick, type Snapshot, type Tick } from './protocol';
-import { applyTick, historicalSeries, liveSeries, replaceSnapshot, niceScale, tickFormatter, promptAverage, promptSeries, sparkPath, sparkDots } from './stats';
+import { applyTick, historicalSeries, liveSeries, replaceSnapshot, niceScale, tickFormatter, promptAverage, promptSeries, sparkPath, sparkDots, alignedScale, tokenTickFormatter, answeredHourNote, answeredHourSeries } from './stats';
 import { snapshot, t } from './fixtures';
 function tick(state: Snapshot, answered = 4): Tick {
   return { version: 1, epoch: state.epoch, seq: state.seq + 1, updated_at: t(Date.parse(state.updated_at) / 1000 + 1), totals: state.totals,
@@ -166,5 +166,79 @@ describe('additive v1 workload metrics', () => {
     const soFar = historicalSeries(s, 60).at(-1)!;
     expect(soFar).toMatchObject({ provisional: true, queued: 3, requests: 2, prompt_tokens: 3000 });
     expect(promptAverage(soFar.requests, soFar.prompt_tokens)).toBe(1500);
+  });
+});
+
+describe('hourly answered tile', () => {
+  it('validates optional hourly totals in REST, snapshots and ticks', () => {
+    const s = snapshot(); s.totals.answered_last_hour = 1234;
+    expect(parseSnapshot(s)).toEqual(s);
+    expect(parseTick(tick(s))?.totals.answered_last_hour).toBe(1234);
+    expect(parseRest({ ...s, ...s.totals })).toEqual(s);
+    for (const value of [-1, 1.5, Infinity, null]) {
+      expect(parseSnapshot({ ...s, totals: { ...s.totals, answered_last_hour: value } })).toBeNull();
+    }
+  });
+  it('notes startup coverage through the first hour and builds per-minute counts', () => {
+    const s = snapshot();
+    s.history.answered = [];
+    expect(answeredHourNote(s)).toBe('since pool restart (0 min)');
+    s.updated_at = t(240);
+    s.live = [{ ...s.live[0], t: t(239) }];
+    expect(answeredHourNote(s)).toBe('since pool restart (1 min)');
+    s.history.answered = [10];
+    expect(answeredHourNote(s)).toBe('since pool restart (2 min)');
+    s.history.answered = Array.from({ length: 58 }, () => 10);
+    expect(answeredHourNote(s)).toBe('since pool restart (59 min)');
+    s.history.answered.push(10);
+    expect(answeredHourNote(s)).toBe('last 60 minutes');
+    s.live.push({ ...s.live[0], t: t(240), answered: 5 });
+    s.updated_at = t(241);
+    expect(answeredHourSeries(s)).toEqual(Array(59).fill(10));
+    s.history.answered.push(100, 20);
+    expect(answeredHourSeries(s)).toEqual([...Array(58).fill(10), 100, 20]);
+  });
+});
+
+describe('dual-axis prompt series', () => {
+  it('weights the last 10 completed seconds by requests and leaves empty windows as gaps', () => {
+    const s = snapshot(195);
+    s.live = Array.from({ length: 15 }, (_, i) => ({ t: t(180 + i), answered: 0, queued: 0, miners: 1, requests: 0, prompt_tokens: 0 }));
+    s.live[1] = { ...s.live[1], requests: 1, prompt_tokens: 1000 };
+    s.live[2] = { ...s.live[2], requests: 3, prompt_tokens: 9000 };
+    const points = liveSeries(s);
+    expect(points[0].prompt).toBeNull();
+    expect(points[1].prompt).toBe(1000);
+    expect(points[2].prompt).toBe(2500);
+    expect(points[10].prompt).toBe(2500);
+    expect(points[11].prompt).toBe(3000);
+    expect(points[12].prompt).toBeNull();
+    s.live[14] = { ...s.live[14], requests: 1, prompt_tokens: 0 };
+    expect(liveSeries(s)[14].prompt).toBe(0);
+    s.live[13].requests = undefined;
+    expect(liveSeries(s)[14].prompt).toBeNull();
+  });
+  it('uses minute averages with gaps, including the provisional current minute', () => {
+    const s = snapshot();
+    s.history = { ...s.history, answered: [10, 0, 20], miners: [1, 1, 1], queued: [0, 0, 0], requests: [1, 0, 4], prompt_tokens: [1000, 0, 10000] };
+    s.live = [{ ...s.live[0], requests: 2, prompt_tokens: 3000 }];
+    expect(historicalSeries(s, 60).map(p => p.prompt)).toEqual([1000, null, 2500, 1500]);
+  });
+  it('matches left-axis interval counts with nice zero-based token steps', () => {
+    for (const leftMax of [0, 0.09, 1, 6, 13, 120, 999]) {
+      const left = niceScale(leftMax), intervals = Math.round(left.top / left.step);
+      for (const max of [0, 0.009, 450, 1400, 4000, 1000000]) {
+        const right = alignedScale(max, intervals);
+        expect(right.top).toBeGreaterThanOrEqual(max);
+        expect(right.top / right.step).toBeCloseTo(intervals);
+        for (let i = 0; i <= intervals; i++) expect(i * right.step / right.top).toBeCloseTo(i * left.step / left.top);
+      }
+    }
+  });
+  it('formats token ticks using step-aware precision and thousands', () => {
+    expect([0, 1000, 2000, 3000, 4000].map(tokenTickFormatter(1000, 'en-US'))).toEqual(['0', '1k', '2k', '3k', '4k']);
+    expect([0, 500, 1000, 1500].map(tokenTickFormatter(500, 'en-US'))).toEqual(['0', '500', '1,000', '1,500']);
+    expect(tokenTickFormatter(2500, 'en-US')(7500)).toBe('7.5k');
+    expect(tokenTickFormatter(0.25, 'en-US')(0.5)).toBe('0.50');
   });
 });

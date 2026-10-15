@@ -1,7 +1,7 @@
 // Additive v1 metrics are optional when reading an older server publication.
 export interface Point { t: string; answered: number; queued: number; miners: number; answering?: number; requests?: number; prompt_tokens?: number }
 export interface History { interval_seconds: 60; end: string; answered: number[]; queued: number[]; miners: number[]; answering?: number[]; requests?: number[]; prompt_tokens?: number[] }
-export interface Totals { miners: number; queued_questions: number; answered_last_24h: number; answered_per_second: number; answering_questions?: number; average_prompt_tokens?: number | null }
+export interface Totals { miners: number; queued_questions: number; answered_last_24h: number; answered_last_hour?: number; answered_per_second: number; answering_questions?: number; average_prompt_tokens?: number | null }
 export interface Shared { version: 1; epoch: string; seq: number; updated_at: string; totals: Totals }
 export interface Snapshot extends Shared { live: Point[]; history: History }
 export interface Tick extends Shared { second: Point; minute: Point | null }
@@ -13,6 +13,7 @@ const number = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 const utc = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().replace('.000Z', 'Z') === v;
 const totals = (v: unknown): v is Totals => object(v) && integer(v.miners) && integer(v.queued_questions)
+  && (v.answered_last_hour === undefined || integer(v.answered_last_hour))
   && integer(v.answered_last_24h) && number(v.answered_per_second)
   && (v.answering_questions === undefined || integer(v.answering_questions))
   && (v.average_prompt_tokens === undefined || v.average_prompt_tokens === null || number(v.average_prompt_tokens));
@@ -58,6 +59,7 @@ export function parseRest(v: unknown): Snapshot | null {
     live: v.live, history: v.history, totals: {
     miners: v.miners, queued_questions: v.queued_questions,
     answered_last_24h: v.answered_last_24h, answered_per_second: v.answered_per_second,
+    ...(v.answered_last_hour === undefined ? {} : { answered_last_hour: v.answered_last_hour }),
     ...(v.answering_questions === undefined ? {} : { answering_questions: v.answering_questions }),
     ...(v.average_prompt_tokens === undefined ? {} : { average_prompt_tokens: v.average_prompt_tokens }),
   } });

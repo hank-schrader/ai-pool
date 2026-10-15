@@ -85,7 +85,7 @@ default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img
 `GET /v1/stats` sends `Cache-Control: public, max-age=5`, reading the latest
 shared publication. Its existing top-level totals/history remain compatible;
 `version`, `epoch`, `seq`, and `live` identify the publication. The workload
-metrics `answering_questions` and `average_prompt_tokens`, and point/history
+metrics `answered_last_hour`, `answering_questions` and `average_prompt_tokens`, and point/history
 `answering`, `requests`, `prompt_tokens` are additive version 1 fields. Readers
 should ignore unknown fields; older version 1 payloads may omit these metrics,
 which the page displays as unavailable rather than zero. No per-question data
@@ -103,6 +103,7 @@ is published:
   "average_prompt_tokens": 1500,
   "answered_per_second": 0.5,
   "answered_last_24h": 90,
+  "answered_last_hour": 91,
   "live": [
     {"t": "2026-10-14T12:02:04Z", "answered": 1, "queued": 3, "miners": 2, "answering": 4, "requests": 1, "prompt_tokens": 1500}
   ],
@@ -147,7 +148,18 @@ second. Peaks reset independently at second/minute boundaries.
 catch-up). During catch-up, earlier bursts belong to their original buckets;
 subsequent idle buckets carry the last known waiting count. `history.end` names the start of the newest
 completed minute; arrays are empty until the first full minute closes.
-`answered_last_24h` sums completed history buckets only. Bucket intervals are
+`answered_last_24h` sums completed history buckets only.
+`answered_last_hour` counts delivered questions in the current UTC minute so far
+plus the 59 most recent completed UTC minutes: a rolling 60-minute-bucket window,
+not an exact trailing 3,600 seconds. It includes the partial startup minute's
+answers while that minute remains in the window, even though that minute is
+excluded from history. Before 60 minute boundaries have elapsed since startup,
+it covers all delivered answers since restart; the page estimates elapsed minutes
+from history length and the startup minute and shows “since pool restart (N min)”.
+The tile sparkline shows completed per-minute answered counts plus the current
+minute's completed seconds, with the partial startup minute omitted as in history.
+
+Bucket intervals are
 half-open `[t, t + interval)` (1 second / 60 seconds). Timing uses monotonic
 elapsed time anchored to UTC at startup. Catch-up work is bounded by retained
 history capacity. All history is in memory and resets on restart.
@@ -172,6 +184,13 @@ question prompts). Thus the displayed average is the mean of the longest
 single-question prompt per answered h2o request. Other backends use their existing
 pre-submit exact input counter. The page labels the aggregate **Average prompt
 size**, **per request, last 60 s**, and explains the h2o convention.
+The main chart also shows prompt size on an independently scaled, zero-based
+right axis in tokens. Live uses a request-weighted average over the last 10
+completed seconds (`sum(prompt_tokens) / sum(requests)`); history uses each
+minute's request-weighted average, including the provisional current minute.
+Empty request windows are gaps, with isolated observations drawn as dots.
+Both axes share tick positions, not units; orange prompt size and blue questions
+per second must be read against their respective axes.
 
 ### Statistics SSE, version 1
 
@@ -189,7 +208,7 @@ Event names are `snapshot` and `tick`, each containing one JSON object. Shared
 fields are `version` (integer, 1), `epoch` (UUID string identifying the server
 process), `seq` (non-negative integer, incremented once per shared publication),
 `updated_at` (RFC3339 UTC), and `totals` containing non-negative integer
-`miners`, `queued_questions`, `answering_questions`, `answered_last_24h`, finite,
+`miners`, `queued_questions`, `answering_questions`, `answered_last_24h`, `answered_last_hour`, finite,
 non-negative `answered_per_second`, and `average_prompt_tokens` (finite,
 non-negative number or null). `snapshot` adds `live` and `history` with the shapes above.
 `tick` adds `second` (one completed-second point) and `minute` (one completed-minute
@@ -199,10 +218,10 @@ History has parallel arrays for all six metrics.
 
 ```text
 event: snapshot
-data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":0,"updated_at":"2026-10-14T12:02:05Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5,"answering_questions":4,"average_prompt_tokens":1500},"live":[{"t":"2026-10-14T12:02:04Z","answered":1,"queued":3,"miners":2,"answering":4,"requests":1,"prompt_tokens":1500}],"history":{"interval_seconds":60,"end":"2026-10-14T12:01:00Z","answered":[60,30],"queued":[0,3],"miners":[2,2],"answering":[4,4],"requests":[20,10],"prompt_tokens":[30000,15000]}}
+data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":0,"updated_at":"2026-10-14T12:02:05Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_last_hour":91,"answered_per_second":0.5,"answering_questions":4,"average_prompt_tokens":1500},"live":[{"t":"2026-10-14T12:02:04Z","answered":1,"queued":3,"miners":2,"answering":4,"requests":1,"prompt_tokens":1500}],"history":{"interval_seconds":60,"end":"2026-10-14T12:01:00Z","answered":[60,30],"queued":[0,3],"miners":[2,2],"answering":[4,4],"requests":[20,10],"prompt_tokens":[30000,15000]}}
 
 event: tick
-data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":1,"updated_at":"2026-10-14T12:02:06Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_per_second":0.5,"answering_questions":4,"average_prompt_tokens":1500},"second":{"t":"2026-10-14T12:02:05Z","answered":0,"queued":3,"miners":2,"answering":4,"requests":0,"prompt_tokens":0},"minute":null}
+data: {"version":1,"epoch":"00000000-0000-4000-8000-000000000001","seq":1,"updated_at":"2026-10-14T12:02:06Z","totals":{"miners":2,"queued_questions":3,"answered_last_24h":90,"answered_last_hour":91,"answered_per_second":0.5,"answering_questions":4,"average_prompt_tokens":1500},"second":{"t":"2026-10-14T12:02:05Z","answered":0,"queued":3,"miners":2,"answering":4,"requests":0,"prompt_tokens":0},"minute":null}
 
 ```
 

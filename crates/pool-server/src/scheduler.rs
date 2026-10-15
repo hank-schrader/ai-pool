@@ -1769,6 +1769,7 @@ mod tests {
             assert_eq!(scheduler.tally.answering_questions, 0);
             assert_eq!(scheduler.stats.snapshot(0, 0, 0).average_prompt_tokens, delivered.then_some(100.0));
             assert_eq!(scheduler.stats.snapshot(0, 0, 0).answered_per_second, u64::from(delivered) as f64 / 60.0);
+            assert_eq!(scheduler.stats.snapshot(0, 0, 0).answered_last_hour, u64::from(delivered));
             if let Some(mut receiver) = receiver {
                 let event = receiver.try_recv().unwrap();
                 if delivered {

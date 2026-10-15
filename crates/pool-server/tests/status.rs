@@ -121,6 +121,7 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
     let response = app.oneshot(Request::builder().uri("/v1/stats").body(Body::empty()).unwrap()).await.unwrap();
     let stats: Value = serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
     assert_eq!(stats["answered_last_24h"], 3);
+    assert_eq!(stats["answered_last_hour"], 3);
     assert_eq!(stats["answering_questions"], 0);
     assert_eq!(stats["average_prompt_tokens"], Value::Null);
     assert_eq!(stats["history"]["requests"], json!([1]));
@@ -172,6 +173,7 @@ async fn public_status_routes_need_no_auth_and_set_security_and_cache_headers() 
     assert_eq!(stats["queued_questions"], 0);
     assert_eq!(stats["answered_per_second"], 0.0);
     assert_eq!(stats["answered_last_24h"], 0);
+    assert_eq!(stats["answered_last_hour"], 0);
     assert_eq!(stats["history"]["interval_seconds"], 60);
     for field in ["answered", "queued", "miners", "answering", "requests", "prompt_tokens"] {
         assert_eq!(stats["history"][field], serde_json::json!([]));

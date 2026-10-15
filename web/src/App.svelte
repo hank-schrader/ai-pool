@@ -42,10 +42,10 @@
     <RangeSelector {range} select={value => { range = value; }} />
     <figure class="card chart">
       <div class="chart-head">
-        <h2>Questions answered per second</h2>
+        <h2>Questions answered and average prompt size</h2>
         <button class="linkish" type="button" aria-expanded={table} aria-controls="history-table" onclick={() => { table = !table; }}>{table ? 'Hide table' : 'Show table'}</button>
       </div>
-      <div class="subtitle">{subtitle}</div>
+      <div class="subtitle">{subtitle} · Axes start at zero and scale independently.</div>
       {#key range}<StatusChart {points} isLive={range === 0} />{/key}
       {#if table}<HistoryTable {points} isLive={range === 0} />{/if}
     </figure>

@@ -32,6 +32,7 @@ fn snapshot(second: i64) -> StatsSnapshot {
         average_prompt_tokens: Some(100.0),
         answered_per_second: 0.5,
         answered_last_24h: 60,
+        answered_last_hour: 61,
         live: Arc::new(
             (180..second)
                 .map(|s| StatsPoint {
@@ -89,6 +90,7 @@ async fn snapshots_ticks_reconnects_lag_and_skipped_seconds_are_consistent() {
     assert!(uuid::Uuid::parse_str(initial["epoch"].as_str().unwrap()).is_ok());
     assert_eq!(initial["seq"], 0);
     assert_eq!(initial["totals"]["miners"], 2);
+    assert_eq!(initial["totals"]["answered_last_hour"], 61);
     assert_eq!(initial["totals"]["answering_questions"], 4);
     assert_eq!(initial["totals"]["average_prompt_tokens"], 100.0);
     assert_eq!(initial["live"][0]["t"], timestamp(180));
@@ -96,6 +98,7 @@ async fn snapshots_ticks_reconnects_lag_and_skipped_seconds_are_consistent() {
     let (name, tick) = event(&mut body).await;
     assert_eq!(name, "tick");
     assert_eq!(tick["seq"], 1);
+    assert_eq!(tick["totals"]["answered_last_hour"], 61);
     assert_eq!(tick["second"]["t"], timestamp(181));
     assert_eq!(tick["second"]["answering"], 4);
     assert_eq!(tick["second"]["requests"], 1);
@@ -144,6 +147,7 @@ async fn first_completed_second_is_a_tick_after_an_empty_live_snapshot() {
     let (name, tick) = event(&mut body).await;
     assert_eq!(name, "tick");
     assert_eq!(tick["seq"], 1);
+    assert_eq!(tick["totals"]["answered_last_hour"], 61);
     assert_eq!(tick["second"]["t"], timestamp(180));
     assert!(tick["minute"].is_null());
 }

@@ -18,6 +18,7 @@ pub struct StatsSnapshot {
     pub average_prompt_tokens: Option<f64>,
     pub answered_per_second: f64,
     pub answered_last_24h: u64,
+    pub answered_last_hour: u64,
     pub history: Arc<History>,
     pub live: Arc<Vec<StatsPoint>>,
 }
@@ -71,6 +72,7 @@ pub(crate) struct Stats {
     minute_queue_peak: u64,
     minutes: VecDeque<Minute>,
     history_answered: u64,
+    startup_answered: u64,
     history: Arc<History>,
     live: Arc<Vec<StatsPoint>>,
 }
@@ -91,6 +93,7 @@ impl Stats {
             minute_queue_peak: 0,
             minutes: VecDeque::with_capacity(HISTORY_MINUTES),
             history_answered: 0,
+            startup_answered: 0,
             live: Arc::new(Vec::new()),
             history: Arc::new(History {
                 interval_seconds: 60,
@@ -158,6 +161,7 @@ impl Stats {
         if minute - self.minute > HISTORY_MINUTES as u64 {
             self.minutes.clear();
             self.history_answered = 0;
+            self.startup_answered = 0;
             self.minute_counts = Counts::default();
             self.minute_queue_peak = queued;
             self.minute = minute - HISTORY_MINUTES as u64;
@@ -175,6 +179,9 @@ impl Stats {
                     answering,
                     miners,
                 });
+            }
+            if self.minute == self.unix_start.as_secs() / 60 {
+                self.startup_answered = self.minute_counts.answered;
             }
             self.minute_counts = Counts::default();
             self.minute_queue_peak = queued;
@@ -215,6 +222,13 @@ impl Stats {
                 .then(|| self.rolling.prompt_tokens as f64 / self.rolling.requests as f64),
             answered_per_second: self.rolling.answered as f64 / RATE_SECONDS as f64,
             answered_last_24h: self.history_answered,
+            answered_last_hour: self.minute_counts.answered
+                + self.minutes.iter().rev().take(59).map(|m| m.counts.answered).sum::<u64>()
+                + if self.minute > self.unix_start.as_secs() / 60 && self.minute - self.unix_start.as_secs() / 60 < 60 {
+                    self.startup_answered
+                } else {
+                    0
+                },
             history: self.history.clone(),
             live: self.live.clone(),
         }
@@ -230,6 +244,34 @@ mod tests {
     use super::*;
     use pool_protocol::{Backend, Catalog, Operation, requests};
     use serde_json::json;
+
+    #[test]
+    fn answered_hour_includes_startup_current_and_only_59_completed_minutes() {
+        let now = Instant::now();
+        let mut stats = Stats::new(now, Duration::from_millis(150_500));
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, 0);
+        stats.answered(7, 100);
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, 7);
+        stats.advance(now + Duration::from_millis(29_500), 0, 0, 0);
+        assert!(stats.snapshot(0, 0, 0).history.answered.is_empty());
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, 7);
+        for minute in 1..=59 {
+            stats.answered(minute, 100);
+            assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, 7 + (1..=minute).sum::<u64>());
+            if minute < 59 {
+                stats.advance(now + Duration::from_millis(29_500) + Duration::from_secs(minute * 60), 0, 0, 0);
+            }
+        }
+        // At the 60th boundary the startup minute leaves the window.
+        stats.advance(now + Duration::from_millis(29_500) + Duration::from_secs(59 * 60), 0, 0, 0);
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, (1..=59).sum::<u64>());
+        stats.answered(60, 100);
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, (1..=60).sum::<u64>());
+        stats.advance(now + Duration::from_millis(29_500) + Duration::from_secs(60 * 60), 0, 0, 0);
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, (2..=60).sum::<u64>());
+        stats.advance(now + Duration::from_secs(1_000_000), 0, 0, 0);
+        assert_eq!(stats.snapshot(0, 0, 0).answered_last_hour, 0);
+    }
 
     #[test]
     fn waiting_peaks_survive_bursts_and_reset_at_second_and_minute_boundaries() {

@@ -32,6 +32,7 @@ pub struct Totals {
     pub answering_questions: u64,
     pub average_prompt_tokens: Option<f64>,
     pub answered_last_24h: u64,
+    pub answered_last_hour: u64,
     pub answered_per_second: f64,
 }
 
@@ -91,6 +92,7 @@ impl PublishedStats {
                 answering_questions: stats.answering_questions,
                 average_prompt_tokens: stats.average_prompt_tokens,
                 answered_last_24h: stats.answered_last_24h,
+                answered_last_hour: stats.answered_last_hour,
                 answered_per_second: stats.answered_per_second,
             },
         };

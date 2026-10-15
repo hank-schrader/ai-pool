@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Snapshot } from '../lib/protocol';
-  import { format, formatInt, promptSeries, sparkPath, sparkDots } from '../lib/stats';
+  import { format, formatInt, promptSeries, answeredHourNote, answeredHourSeries, sparkPath, sparkDots } from '../lib/stats';
   let { snapshot }: { snapshot: Snapshot | null } = $props();
   const metrics = $derived([
     { key: 'miners', label: 'Miners connected', value: snapshot?.totals.miners, unit: '', note: 'last hour', values: snapshot?.history.miners.slice(-60) ?? [], help: '' },
-    { key: 'answering', label: 'Questions being answered', value: snapshot?.totals.answering_questions, unit: '', note: 'last hour', values: snapshot?.history.answering?.slice(-60) ?? [], help: '' },
+    { key: 'answered', label: 'Questions answered in the last hour', value: snapshot?.totals.answered_last_hour, unit: '', note: snapshot ? answeredHourNote(snapshot) : 'last 60 minutes', values: snapshot ? answeredHourSeries(snapshot) : [], help: 'Current minute so far plus the 59 most recent completed minutes, including the partial startup minute while it is in the window. Sparkline: answered questions per completed minute.' },
     { key: 'queued', label: 'Questions waiting for a miner', value: snapshot?.totals.queued_questions, unit: '', note: 'last hour · peak per minute', values: snapshot?.history.queued.slice(-60) ?? [], help: 'Current waiting count; the sparkline retains each completed minute’s peak.' },
     { key: 'prompt', label: 'Average prompt size', value: snapshot?.totals.average_prompt_tokens, unit: ' tokens', note: 'per request, last 60 s', values: snapshot ? promptSeries(snapshot).slice(-60) : [], help: 'Pre-submit input count per answered request. For h2o, the longest single-question prompt, including shared state and the question template; not the sum across questions. Sparkline: completed minute averages over the last hour; gaps mean no answered requests.' },
   ]);

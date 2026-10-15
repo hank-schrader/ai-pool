@@ -1,5 +1,5 @@
 import type { Snapshot, Tick, Point } from './protocol';
-export interface SeriesPoint { t: number; v: number; average?: number; provisional?: boolean; incomplete?: boolean; seconds?: number; queued?: number; miners?: number; answering?: number; requests?: number; prompt_tokens?: number }
+export interface SeriesPoint { t: number; v: number; average?: number; prompt?: number | null; provisional?: boolean; incomplete?: boolean; seconds?: number; queued?: number; miners?: number; answering?: number; requests?: number; prompt_tokens?: number }
 export type Range = 0 | 60 | 360 | 1440;
 export type Reduction = { state: Snapshot | null; resync: boolean; changed: boolean };
 export function replaceSnapshot(state: Snapshot | null, next: Snapshot): Reduction {
@@ -55,11 +55,18 @@ function metrics(point: Point): Pick<SeriesPoint, 'queued' | 'miners' | 'answeri
   return { queued: point.queued, miners: point.miners, answering: point.answering, requests: point.requests, prompt_tokens: point.prompt_tokens };
 }
 export function liveSeries(state: Snapshot): SeriesPoint[] {
-  let sum = 0;
+  let sum = 0, requests = 0, tokens = 0, missing = 0;
   return state.live.map((p, i, points) => {
     sum += p.answered;
-    if (i >= 10) sum -= points[i - 10].answered;
-    return { ...metrics(p), t: Date.parse(p.t), v: p.answered, average: sum / Math.min(i + 1, 10) };
+    requests += p.requests ?? 0; tokens += p.prompt_tokens ?? 0;
+    missing += Number(p.requests === undefined || p.prompt_tokens === undefined);
+    if (i >= 10) {
+      const old = points[i - 10];
+      sum -= old.answered; requests -= old.requests ?? 0; tokens -= old.prompt_tokens ?? 0;
+      missing -= Number(old.requests === undefined || old.prompt_tokens === undefined);
+    }
+    return { ...metrics(p), t: Date.parse(p.t), v: p.answered, average: sum / Math.min(i + 1, 10),
+      prompt: missing ? null : promptAverage(requests, tokens) };
   });
 }
 export function historicalSeries(state: Snapshot, range: Exclude<Range, 0>): SeriesPoint[] {
@@ -73,7 +80,7 @@ export function historicalSeries(state: Snapshot, range: Exclude<Range, 0>): Ser
     requests: observed.every(p => p.requests !== undefined) ? observed.reduce((sum, p) => sum + p.requests!, 0) : undefined,
     prompt_tokens: observed.every(p => p.prompt_tokens !== undefined) ? observed.reduce((sum, p) => sum + p.prompt_tokens!, 0) : undefined,
     provisional: true, incomplete: Date.parse(observed[0].t) !== minute, seconds: observed.length });
-  return points.filter(p => p.t >= minute - range * 60000);
+  return points.filter(p => p.t >= minute - range * 60000).map(p => ({ ...p, prompt: promptAverage(p.requests, p.prompt_tokens) }));
 }
 export const format = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 export const formatInt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
@@ -93,4 +100,24 @@ export function tickFormatter(step: number, locale?: string): Intl.NumberFormat 
   const fraction = (coefficient.split('.')[1] ?? '').replace(/0+$/, '').length;
   const decimals = Math.max(0, Math.min(20, fraction - Number(exponent)));
   return new Intl.NumberFormat(locale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+// Match the left axis intervals exactly; each token tick shares a gridline.
+export function alignedScale(max: number, intervals: number): { step: number; top: number } {
+  const raw = (max || 1) / intervals, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw)!;
+  return { step, top: step * intervals };
+}
+export function tokenTickFormatter(step: number, locale?: string): (value: number) => string {
+  const compact = step >= 1000, formatter = tickFormatter(compact ? step / 1000 : step, locale);
+  return value => value === 0 ? '0' : formatter.format(compact ? value / 1000 : value) + (compact ? 'k' : '');
+}
+export function answeredHourNote(state: Snapshot): string {
+  const minutes = state.history.answered.length ? state.history.answered.length + 1
+    : Math.floor(Date.parse(state.updated_at) / 60000) - Math.floor(Date.parse(state.live[0]?.t ?? state.updated_at) / 60000);
+  return minutes >= 60 ? 'last 60 minutes' : `since pool restart (${minutes} min)`;
+}
+// Completed minutes only: a partial current minute would always look like a drop.
+export function answeredHourSeries(state: Snapshot): number[] {
+  return state.history.answered.slice(-60);
 }
