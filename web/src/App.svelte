@@ -6,16 +6,26 @@
   import HistoryTable from './components/HistoryTable.svelte';
   import { connect, type ConnectionStatus } from './lib/connection';
   import type { Snapshot } from './lib/protocol';
-  import { historicalSeries, liveSeries, type Range } from './lib/stats';
+  import { chartScales, historicalSeries, liveSeries, type ChartScales, type Range } from './lib/stats';
   let snapshot = $state.raw<Snapshot | null>(null);
   let status = $state<ConnectionStatus>('connecting');
   const live = $derived(status === 'live');
   const statusLabel = $derived(status === 'live' ? 'Live' : status === 'offline' ? 'Offline' : status === 'connecting' ? 'Connecting…' : 'Reconnecting…');
   let range = $state<Range>(0), table = $state(false);
+  let axes = $state.raw<ChartScales>(chartScales(null, [], '1970-01-01T00:00:00Z', 0, ''));
+  let resetAxes = false;
   let theme = $state<'auto' | 'light' | 'dark'>('auto');
   const points = $derived(snapshot ? range === 0 ? liveSeries(snapshot) : historicalSeries(snapshot, range) : []);
   const subtitle = $derived(range === 0 ? 'Completed seconds · last 5 minutes' : `1-minute averages · last ${range === 60 ? 'hour' : range === 360 ? '6 hours' : '24 hours'}`);
-  onMount(() => connect(next => { snapshot = next; }, value => { status = value; }));
+  function updateAxes(next: Snapshot) {
+    const series = range === 0 ? liveSeries(next) : historicalSeries(next, range);
+    axes = chartScales(resetAxes ? null : axes, series, next.updated_at, range, next.epoch);
+  }
+  function selectRange(next: Range) {
+    range = next;
+    if (snapshot) updateAxes(snapshot);
+  }
+  onMount(() => connect(next => { updateAxes(next); resetAxes = false; snapshot = next; }, value => { status = value; }, () => { resetAxes = true; }));
   function changeTheme() {
     theme = theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto';
     if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
@@ -39,14 +49,14 @@
   </header>
   <div class:stale={!live && snapshot !== null}>
     <MetricCards {snapshot} />
-    <RangeSelector {range} select={value => { range = value; }} />
+    <RangeSelector {range} select={selectRange} />
     <figure class="card chart">
       <div class="chart-head">
         <h2>Questions answered and average prompt size</h2>
         <button class="linkish" type="button" aria-expanded={table} aria-controls="history-table" onclick={() => { table = !table; }}>{table ? 'Hide table' : 'Show table'}</button>
       </div>
       <div class="subtitle">{subtitle} · Axes start at zero and scale independently.</div>
-      {#key range}<StatusChart {points} isLive={range === 0} />{/key}
+      {#key range}<StatusChart {points} {axes} isLive={range === 0} />{/key}
       {#if table}<HistoryTable {points} isLive={range === 0} />{/if}
     </figure>
   </div>

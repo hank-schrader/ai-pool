@@ -4,7 +4,7 @@ import { applyTick, replaceSnapshot } from './stats';
 export type ConnectionStatus = 'connecting' | 'live' | 'reconnecting' | 'offline';
 
 // All resources belong to this instance and are released by stop().
-export function connect(onSnapshot: (snapshot: Snapshot) => void, onStatus: (status: ConnectionStatus) => void): () => void {
+export function connect(onSnapshot: (snapshot: Snapshot) => void, onStatus: (status: ConnectionStatus) => void, onResync?: () => void): () => void {
   let state: Snapshot | null = null;
   let source: EventSource | null = null;
   let controller: AbortController | null = null;
@@ -107,7 +107,7 @@ export function connect(onSnapshot: (snapshot: Snapshot) => void, onStatus: (sta
         const tick = parseTick(JSON.parse((event as MessageEvent).data));
         if (!tick || !receivedSnapshot) { failed(); return; }
         const result = applyTick(state, tick);
-        if (result.resync) { failed(); return; }
+        if (result.resync) { onResync?.(); failed(); return; }
         state = result.state;
         if (result.changed && state) {
           onSnapshot(state); advanced();

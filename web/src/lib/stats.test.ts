@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseRest, parseSnapshot, parseTick, type Snapshot, type Tick } from './protocol';
-import { applyTick, historicalSeries, liveSeries, replaceSnapshot, niceScale, tickFormatter, promptAverage, promptSeries, sparkPath, sparkDots, alignedScale, tokenTickFormatter, answeredHourNote, answeredHourSeries } from './stats';
+import { applyTick, historicalSeries, liveSeries, replaceSnapshot, niceScale, tickFormatter, promptAverage, promptSeries, sparkPath, sparkDots, alignedScale, tokenTickFormatter, answeredHourNote, answeredHourSeries, chartScales, type ChartScales, type Range } from './stats';
 import { snapshot, t } from './fixtures';
 function tick(state: Snapshot, answered = 4): Tick {
   return { version: 1, epoch: state.epoch, seq: state.seq + 1, updated_at: t(Date.parse(state.updated_at) / 1000 + 1), totals: state.totals,
@@ -207,9 +207,9 @@ describe('dual-axis prompt series', () => {
     s.live[1] = { ...s.live[1], requests: 1, prompt_tokens: 1000 };
     s.live[2] = { ...s.live[2], requests: 3, prompt_tokens: 9000 };
     const points = liveSeries(s);
-    expect(points[0].prompt).toBeNull();
-    expect(points[1].prompt).toBe(1000);
-    expect(points[2].prompt).toBe(2500);
+    expect(points.slice(0, 9).map(p => p.prompt)).toEqual(Array(9).fill(null));
+    expect(points.slice(0, 9).every(p => p.promptPending)).toBe(true);
+    expect(points[9]).toMatchObject({ prompt: 2500, promptPending: false });
     expect(points[10].prompt).toBe(2500);
     expect(points[11].prompt).toBe(3000);
     expect(points[12].prompt).toBeNull();
@@ -222,7 +222,34 @@ describe('dual-axis prompt series', () => {
     const s = snapshot();
     s.history = { ...s.history, answered: [10, 0, 20], miners: [1, 1, 1], queued: [0, 0, 0], requests: [1, 0, 4], prompt_tokens: [1000, 0, 10000] };
     s.live = [{ ...s.live[0], requests: 2, prompt_tokens: 3000 }];
-    expect(historicalSeries(s, 60).map(p => p.prompt)).toEqual([1000, null, 2500, 1500]);
+    expect(historicalSeries(s, 60).map(p => p.prompt)).toEqual([1000, null, 2500, null]);
+  });
+  it('gates provisional prompt values until ten observed completed seconds in every history range', () => {
+    for (const range of [60, 360, 1440] as const) {
+      for (let seconds = 1; seconds <= 10; seconds++) {
+        const s = snapshot(180 + seconds);
+        s.live = Array.from({ length: seconds }, (_, i) => ({ t: t(180 + i), answered: 1, queued: 0, miners: 1, requests: 1, prompt_tokens: 20000 }));
+        const points = historicalSeries(s, range);
+        expect(points.at(-1)).toMatchObject({ prompt: seconds < 10 ? null : 20000, promptPending: seconds < 10 });
+        const axes = chartScales(null, points, s.updated_at, range, s.epoch);
+        if (seconds < 10) {
+          expect(axes.right.scale).toEqual(chartScales(null, points.slice(0, -1), s.updated_at, range, s.epoch).right.scale);
+        } else expect(axes.right.scale.top).toBeGreaterThanOrEqual(20000 * 1.05);
+      }
+    }
+    const s = snapshot(200);
+    s.live = Array.from({ length: 9 }, (_, i) => ({ t: t(191 + i), answered: 1, queued: 0, miners: 1, requests: 1, prompt_tokens: 1000 }));
+    expect(historicalSeries(s, 60).at(-1)).toMatchObject({ incomplete: true, prompt: null, promptPending: true });
+  });
+  it('excludes a sparse long-prompt edge from the axis while preserving complete weighted windows', () => {
+    const s = snapshot(200);
+    s.live = Array.from({ length: 20 }, (_, i) => ({ t: t(180 + i), answered: 1, queued: 0, miners: 1, requests: 10, prompt_tokens: 10000 }));
+    s.live[0] = { ...s.live[0], requests: 1, prompt_tokens: 20000 };
+    const points = liveSeries(s);
+    expect(points[0].prompt).toBeNull();
+    expect(points[9].prompt).toBeCloseTo(110000 / 91);
+    expect(points[10].prompt).toBe(1000);
+    expect(chartScales(null, points, s.updated_at, 0, s.epoch).right.scale.top).toBe(1500);
   });
   it('matches left-axis interval counts with nice zero-based token steps', () => {
     for (const leftMax of [0, 0.09, 1, 6, 13, 120, 999]) {
@@ -240,5 +267,99 @@ describe('dual-axis prompt series', () => {
     expect([0, 500, 1000, 1500].map(tokenTickFormatter(500, 'en-US'))).toEqual(['0', '500', '1,000', '1,500']);
     expect(tokenTickFormatter(2500, 'en-US')(7500)).toBe('7.5k');
     expect(tokenTickFormatter(0.25, 'en-US')(0.5)).toBe('0.50');
+  });
+});
+
+describe('axis hysteresis using publication timestamps', () => {
+  const epoch = snapshot().epoch;
+  const update = (previous: ChartScales | null, second: number, max = 19, prompt = 1784, range: Range = 0, nextEpoch = epoch) =>
+    chartScales(previous, [{ t: second * 1000, v: max, prompt }], t(second), range, nextEpoch);
+  it('holds both tops for 30 seconds of fitting data, then shrinks', () => {
+    let axes = update(null, 100, 90, 9000);
+    const large = axes;
+    axes = update(axes, 101);
+    // Repeated renders/publications at one timestamp cannot advance the clock.
+    for (let i = 0; i < 40; i++) axes = update(axes, 101);
+    axes = update(axes, 130);
+    expect(axes.left.scale).toEqual(large.left.scale);
+    expect(axes.right.scale).toEqual(large.right.scale);
+    axes = update(axes, 131);
+    expect(axes.left.scale.top).toBe(20);
+    expect(axes.right.scale.top).toBe(2000);
+  });
+  it('grows immediately on real question and prompt spikes', () => {
+    let axes = update(null, 100);
+    axes = update(axes, 101, 90, 20000);
+    expect(axes.left.scale.top).toBeGreaterThanOrEqual(90 * 1.05);
+    expect(axes.right.scale.top).toBeGreaterThanOrEqual(20000 * 1.05);
+    axes = update(axes, 102);
+    const held = axes;
+    axes = update(axes, 103, 190, 40000);
+    expect(axes.left.scale.top).toBeGreaterThan(held.left.scale.top);
+    expect(axes.right.scale.top).toBeGreaterThan(held.right.scale.top);
+  });
+  it('keeps the right scale stable as the left max wiggles across a nice boundary', () => {
+    let axes = update(null, 100, 21);
+    const original = axes;
+    expect(axes.left.scale).toEqual({ top: 30, step: 10 });
+    for (const [second, max] of [[101, 19], [115, 21], [116, 19], [130, 21], [131, 19], [160, 19]]) {
+      axes = update(axes, second, max);
+      expect(axes.left.scale).toEqual(original.left.scale);
+      expect(axes.right.scale).toEqual(original.right.scale);
+    }
+    axes = update(axes, 161);
+    expect(axes.left.scale).toEqual({ top: 20, step: 5 });
+    expect(axes.right.scale.top / axes.right.scale.step).toBe(4);
+  });
+  it('restarts the shrink clock when data stops fitting its smaller target', () => {
+    let axes = update(null, 100, 90, 9000);
+    axes = update(axes, 101);
+    axes = update(axes, 120, 50, 5000);
+    axes = update(axes, 131, 50, 5000);
+    expect(axes.left.scale.top).toBe(100);
+    expect(axes.right.scale.top).toBe(10000);
+    axes = update(axes, 150, 50, 5000);
+    expect(axes.left.scale.top).toBe(60);
+    expect(axes.right.scale.top).toBeLessThan(10000);
+  });
+  it('requires another full delay before adopting an even smaller target', () => {
+    let axes = update(null, 100, 90, 9000);
+    axes = update(axes, 101, 50, 5000);
+    axes = update(axes, 130);
+    axes = update(axes, 131);
+    expect(axes.left.scale.top).toBe(60);
+    axes = update(axes, 132);
+    axes = update(axes, 161);
+    expect(axes.left.scale.top).toBe(60);
+    axes = update(axes, 162);
+    expect(axes.left.scale.top).toBe(20);
+  });
+  it('resets immediately on every range switch, epoch change and explicit resync', () => {
+    const large = update(null, 100, 90, 9000);
+    const fresh = update(null, 101);
+    for (const range of [60, 360, 1440] as const) {
+      const changed = update(large, 101, 19, 1784, range);
+      expect(changed.left).toEqual(fresh.left);
+      expect(changed.right).toEqual(fresh.right);
+      const backToLive = update(update(changed, 102, 90, 9000, range), 103);
+      expect(backToLive.left).toEqual(fresh.left);
+      expect(backToLive.right).toEqual(fresh.right);
+    }
+    const restarted = update(large, 101, 19, 1784, 0, '00000000-0000-4000-8000-000000000002');
+    expect(restarted.left).toEqual(fresh.left);
+    expect(restarted.right).toEqual(fresh.right);
+    const resynced = update(null, 101);
+    expect(resynced.left).toEqual(fresh.left);
+    expect(resynced.right).toEqual(fresh.right);
+  });
+  it('aligns every token tick with a zero-based left gridline through scale changes', () => {
+    let axes: ChartScales | null = null;
+    for (const [second, max, prompt] of [[100, 19, 1784], [101, 21, 1784], [102, 19, 1784], [132, 19, 1784], [133, 90, 20000], [134, 1, 10], [164, 1, 10]]) {
+      axes = update(axes, second, max, prompt);
+      const left = axes.left.scale, right = axes.right.scale;
+      const intervals = Math.round(left.top / left.step);
+      expect(right.top).toBeGreaterThanOrEqual(prompt * 1.05);
+      for (let i = 0; i <= intervals; i++) expect(i * right.step / right.top).toBeCloseTo(i * left.step / left.top);
+    }
   });
 });

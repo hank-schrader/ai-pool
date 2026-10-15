@@ -91,12 +91,14 @@ describe('connection lifetime and fallback', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it('owns one stream, validates events and closes on a sequence gap', async () => {
-    const update = vi.fn(), status = vi.fn(); cleanup = connect(update, status);
+    const update = vi.fn(), status = vi.fn(), resync = vi.fn(); cleanup = connect(update, status, resync);
     const source = current(), s = snapshot();
     source.emit('snapshot', s);
     expect(update).toHaveBeenCalledWith(s); expect(status).toHaveBeenLastCalledWith('live');
-    source.emit('tick', { ...s, seq: s.seq + 2, second: { ...s.live[0], t: s.updated_at }, minute: null });
+    expect(resync).not.toHaveBeenCalled();
+    source.emit('tick', { ...s, seq: s.seq + 2, updated_at: t(182), second: { ...s.live[0], t: s.updated_at }, minute: null });
     expect(source.closed).toBe(true); expect(status).toHaveBeenLastCalledWith('offline');
+    expect(resync).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1000);
     expect(SourceMock.instances).toHaveLength(2);

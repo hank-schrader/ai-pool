@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { format, formatInt, timeFormat, niceScale, alignedScale, tickFormatter, tokenTickFormatter, pointNote, type SeriesPoint } from '../lib/stats';
-  let { points, isLive }: { points: SeriesPoint[]; isLive: boolean } = $props();
+  import { format, formatInt, timeFormat, tickFormatter, tokenTickFormatter, pointNote, type ChartScales, type SeriesPoint } from '../lib/stats';
+  let { points, axes, isLive }: { points: SeriesPoint[]; axes: ChartScales; isLive: boolean } = $props();
   let width = $state(960), hover = $state<number | null>(null);
   const W = $derived(Math.max(320, width));
-  const scale = $derived(niceScale(Math.max(0, ...points.map(p => Math.max(p.v, p.average ?? 0))) * 1.05));
+  const scale = $derived(axes.left.scale);
   const intervals = $derived(Math.round(scale.top / scale.step));
-  const promptScale = $derived(alignedScale(Math.max(0, ...points.map(p => p.prompt ?? 0)) * 1.05, intervals));
+  const promptScale = $derived(axes.right.scale);
   const axisFormat = $derived(tickFormatter(scale.step));
   const tokenFormat = $derived(tokenTickFormatter(promptScale.step));
   const ticks = $derived(Array.from({ length: intervals + 1 }, (_, i) => i));
@@ -38,7 +38,7 @@
   const tooltipWidth = $derived(Math.min(300, W - 16));
   const tooltipX = $derived(Math.max(8, Math.min(W - tooltipWidth - 8, x(hover ?? 0) - tooltipWidth / 2)));
   const tooltipY = $derived(focused ? Math.max(32, Math.min(150, y(focused.average ?? focused.v) - 122)) : 32);
-  const focusedText = $derived(focused ? `${new Date(focused.t).toLocaleString()}: ${format.format(focused.v)} questions per second. ${isLive ? `10-second average: ${format.format(focused.average ?? focused.v)} questions per second.` : pointNote(focused)} Average prompt size${isLive ? ', last 10 completed seconds' : ''}: ${focused.prompt == null ? 'unavailable; no answered requests or missing data' : `${formatInt.format(focused.prompt)} tokens per request`}.` : 'Most recent completed bucket');
+  const focusedText = $derived(focused ? `${new Date(focused.t).toLocaleString()}: ${format.format(focused.v)} questions per second. ${isLive ? `10-second average: ${format.format(focused.average ?? focused.v)} questions per second.` : pointNote(focused)} Average prompt size${isLive ? ', last 10 completed seconds' : ''}: ${focused.promptPending ? 'needs 10 seconds of data' : focused.prompt == null ? 'unavailable; no answered requests or missing data' : `${formatInt.format(focused.prompt)} tokens per request`}.` : 'Most recent completed bucket');
   const xTicks = $derived.by(() => {
     const fit = Math.max(2, Math.min(6, Math.floor(plotWidth / 90)));
     const step = Math.max(1, Math.round(points.length / fit));
@@ -68,7 +68,7 @@
   <span><i class="legend-prompt"></i>Average prompt size (right axis)</span>
 </div>
 <div class="plot" bind:clientWidth={width}>
-  <svg viewBox={`0 0 ${W} 300`} tabindex="0" role="slider" aria-roledescription="chart time cursor" aria-valuemin="0" aria-valuemax={Math.max(0, last)} aria-valuenow={hover ?? Math.max(0, last)} aria-valuetext={focusedText} aria-label="Questions answered per second (left axis) and average prompt size in tokens per request (right axis) over time. Both axes start at zero and scale independently. Prompt size uses the last 10 completed seconds in Live and each minute in history; gaps mean no answered requests or missing data. Use arrow keys, Home and End to explore; Escape to dismiss." onpointermove={pointer} onpointerleave={() => { hover = null; }} onkeydown={key} onblur={() => { hover = null; }}>
+  <svg viewBox={`0 0 ${W} 300`} tabindex="0" role="slider" aria-roledescription="chart time cursor" aria-valuemin="0" aria-valuemax={Math.max(0, last)} aria-valuenow={hover ?? Math.max(0, last)} aria-valuetext={focusedText} aria-label="Questions answered per second (left axis) and average prompt size in tokens per request (right axis) over time. Both axes start at zero and scale independently. Prompt size uses the last 10 completed seconds in Live and each minute in history; gaps mean fewer than 10 completed seconds, no answered requests or missing data. Use arrow keys, Home and End to explore; Escape to dismiss." onpointermove={pointer} onpointerleave={() => { hover = null; }} onkeydown={key} onblur={() => { hover = null; }}>
     <line x1="46" x2="58" y1="12" y2="12" stroke="var(--series-1)" stroke-width="2" />
     <text x="64" y="16" class="axis-title">questions / s</text>
     <line x1={W - 128} x2={W - 116} y1="12" y2="12" stroke="var(--series-prompt)" stroke-width="2" />
@@ -100,7 +100,7 @@
           <rect width={tooltipWidth} height={focused.provisional || isLive ? 110 : 88} rx="10" fill="var(--surface-1)" stroke="var(--border)" />
           <text x="12" y="23" class="tooltip-value">{format.format(focused.v)} questions / s</text>
           <text x="12" y="43" class="tick">{new Date(focused.t).toLocaleString()}</text>
-          <text x="12" y="65" class="tick">Average prompt: {focused.prompt == null ? '–' : `${formatInt.format(focused.prompt)} tok`}{isLive ? ' · 10 s' : ''}</text>
+          <text x="12" y="65" class="tick">{focused.promptPending ? 'needs 10 seconds of data' : `Average prompt: ${focused.prompt == null ? '–' : `${formatInt.format(focused.prompt)} tok`}${isLive ? ' · 10 s' : ''}`}</text>
           {#if isLive}<text x="12" y="87" class="tick">10-second average: {format.format(focused.average ?? focused.v)} q/s</text>
           {:else if focused.provisional}<text x="12" y="87" class="tick">{focused.incomplete ? 'so far · incomplete startup coverage' : `so far · ${focused.seconds} completed seconds`}</text>{/if}
         </g>

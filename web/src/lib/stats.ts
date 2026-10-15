@@ -1,5 +1,5 @@
 import type { Snapshot, Tick, Point } from './protocol';
-export interface SeriesPoint { t: number; v: number; average?: number; prompt?: number | null; provisional?: boolean; incomplete?: boolean; seconds?: number; queued?: number; miners?: number; answering?: number; requests?: number; prompt_tokens?: number }
+export interface SeriesPoint { t: number; v: number; average?: number; prompt?: number | null; promptPending?: boolean; provisional?: boolean; incomplete?: boolean; seconds?: number; queued?: number; miners?: number; answering?: number; requests?: number; prompt_tokens?: number }
 export type Range = 0 | 60 | 360 | 1440;
 export type Reduction = { state: Snapshot | null; resync: boolean; changed: boolean };
 export function replaceSnapshot(state: Snapshot | null, next: Snapshot): Reduction {
@@ -66,7 +66,7 @@ export function liveSeries(state: Snapshot): SeriesPoint[] {
       missing -= Number(old.requests === undefined || old.prompt_tokens === undefined);
     }
     return { ...metrics(p), t: Date.parse(p.t), v: p.answered, average: sum / Math.min(i + 1, 10),
-      prompt: missing ? null : promptAverage(requests, tokens) };
+      prompt: i < 9 || missing ? null : promptAverage(requests, tokens), promptPending: i < 9 };
   });
 }
 export function historicalSeries(state: Snapshot, range: Exclude<Range, 0>): SeriesPoint[] {
@@ -80,7 +80,10 @@ export function historicalSeries(state: Snapshot, range: Exclude<Range, 0>): Ser
     requests: observed.every(p => p.requests !== undefined) ? observed.reduce((sum, p) => sum + p.requests!, 0) : undefined,
     prompt_tokens: observed.every(p => p.prompt_tokens !== undefined) ? observed.reduce((sum, p) => sum + p.prompt_tokens!, 0) : undefined,
     provisional: true, incomplete: Date.parse(observed[0].t) !== minute, seconds: observed.length });
-  return points.filter(p => p.t >= minute - range * 60000).map(p => ({ ...p, prompt: promptAverage(p.requests, p.prompt_tokens) }));
+  return points.filter(p => p.t >= minute - range * 60000).map(p => {
+    const promptPending = !!p.provisional && p.seconds! < 10;
+    return { ...p, prompt: promptPending ? null : promptAverage(p.requests, p.prompt_tokens), promptPending };
+  });
 }
 export const format = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 export const formatInt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
@@ -107,6 +110,39 @@ export function alignedScale(max: number, intervals: number): { step: number; to
   const raw = (max || 1) / intervals, mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw)!;
   return { step, top: step * intervals };
+}
+type Scale = { step: number; top: number };
+interface AxisState { scale: Scale; shrink?: { scale: Scale; since: number; max: number } }
+export interface ChartScales {
+  left: AxisState; right: AxisState; range: Range; epoch: string; updatedAt: number;
+}
+function stabilizeAxis(previous: AxisState | undefined, max: number, now: number, candidate: Scale): AxisState {
+  if (!previous || max > previous.scale.top) return { scale: candidate };
+  if (candidate.top >= previous.scale.top) return { scale: previous.scale };
+  // Keep a smaller target's clock while the data still fits it, even if the
+  // latest candidate is smaller again. A rise above that target restarts it.
+  const shrink = previous.shrink && max <= previous.shrink.scale.top
+    ? { ...previous.shrink, max: Math.max(previous.shrink.max, max) } : { scale: candidate, since: now, max };
+  return now - shrink.since >= 30000 ? { scale: shrink.scale } : { scale: previous.scale, shrink };
+}
+// Called once per publication (or range change), using server time. Passing null
+// resets after a resync; range, epoch and backwards time also reset both axes.
+export function chartScales(previous: ChartScales | null, points: SeriesPoint[], updatedAt: string, range: Range, epoch: string): ChartScales {
+  const now = Date.parse(updatedAt);
+  if (previous && (previous.range !== range || previous.epoch !== epoch || now < previous.updatedAt)) previous = null;
+  const max = Math.max(0, ...points.map(p => Math.max(p.v, p.average ?? 0))) * 1.05;
+  const left = stabilizeAxis(previous?.left, max, now, niceScale(max));
+  const intervals = Math.round(left.scale.top / left.scale.step);
+  const promptMax = Math.max(0, ...points.map(p => p.prompt ?? 0)) * 1.05;
+  let previousRight = previous?.right;
+  if (previous && intervals !== Math.round(previous.left.scale.top / previous.left.scale.step)) {
+    // Re-align only when the stabilized grid changes, preserving headroom.
+    const shrink = previous.right.shrink;
+    previousRight = { scale: alignedScale(previous.right.scale.top, intervals),
+      shrink: shrink ? { ...shrink, scale: alignedScale(shrink.max, intervals) } : undefined };
+  }
+  const right = stabilizeAxis(previousRight, promptMax, now, alignedScale(promptMax, intervals));
+  return { left, right, range, epoch, updatedAt: now };
 }
 export function tokenTickFormatter(step: number, locale?: string): (value: number) => string {
   const compact = step >= 1000, formatter = tickFormatter(compact ? step / 1000 : step, locale);
