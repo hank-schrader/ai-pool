@@ -279,7 +279,7 @@ mod tests {
     use pool_protocol::Catalog;
 
     fn catalog() -> Catalog {
-        Catalog::parse(include_str!("../../../config/models.json")).unwrap()
+        Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap()
     }
 
     #[test]

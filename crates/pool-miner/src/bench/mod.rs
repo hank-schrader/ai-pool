@@ -521,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_accepts_benchmark_flags_and_loads_offline_catalog() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models.json");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/all-models.json");
         let cli = Cli::try_parse_from([
             "pool-miner",
             "bench",
@@ -557,7 +557,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn fake_inference_sample_excludes_warmup_and_includes_drain() {
-        let catalog = Catalog::parse(include_str!("../../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../../tests/fixtures/all-models.json")).unwrap();
         let model = catalog.model("h2o").unwrap();
         let choices = plan::benchmark_choices(model, Accelerator::Cuda, 2304, 19000, None).unwrap();
         let mut row = Row::new(&choices[0], None);
@@ -632,7 +632,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn fixed_workload_fake_inference_table() {
-        let catalog = Catalog::parse(include_str!("../../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../../tests/fixtures/all-models.json")).unwrap();
         let model = catalog.model("qwen2.5-1.5b-instruct").unwrap();
         let choices = plan::benchmark_choices(model, Accelerator::Cuda, 4000, 19000, None).unwrap();
         let mut rows = Vec::new();
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn chat_usage_missing_samples_and_failures_serialize() {
-        let catalog = Catalog::parse(include_str!("../../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../../tests/fixtures/all-models.json")).unwrap();
         let chat = catalog.model("qwen2.5-1.5b-instruct").unwrap();
         let choices = plan::benchmark_choices(chat, Accelerator::Cuda, 4000, 19000, None).unwrap();
         let mut row = Row::new(&choices[0], Some(20));

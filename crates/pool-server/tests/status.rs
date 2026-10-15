@@ -48,7 +48,7 @@ fn config() -> Config {
 async fn completed_questions_reach_the_public_api_without_a_socket() {
     let mut config = config();
     config.heartbeat = Duration::from_secs(120);
-    let state = AppState::new(config, Catalog::parse(include_str!("../../../config/models.json")).unwrap());
+    let state = AppState::new(config, Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap());
     let scheduler = state.scheduler.clone();
     let model = state.catalog.model("clef").unwrap();
     let (outbound, mut messages) = mpsc::channel(16);
@@ -139,7 +139,8 @@ async fn public_status_routes_need_no_auth_and_set_security_and_cache_headers() 
     config.client_api_keys = vec!["client-secret".into()];
     config.miner_tokens = vec!["miner-secret".into()];
     config.admin_token = Some("admin-secret".into());
-    let app = router(AppState::new(config, Catalog::parse(include_str!("../../../config/models.json")).unwrap()));
+    let app =
+        router(AppState::new(config, Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap()));
 
     let response = app.clone().oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);

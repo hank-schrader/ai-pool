@@ -487,12 +487,17 @@ mod tests {
     use super::*;
 
     const SHIPPED: &str = include_str!("../../../config/models.json");
+    /// Every backend, for the tests that need models the pool no longer serves.
+    const ALL_MODELS: &str = include_str!("../../../tests/fixtures/all-models.json");
 
     #[test]
-    fn shipped_catalog_is_valid() {
+    fn shipped_catalog_serves_only_h2o() {
         let catalog = Catalog::parse(SHIPPED).expect("config/models.json is valid");
-        assert!(catalog.model("clef").is_some());
-        assert_eq!(catalog.model("clef").unwrap().capability(), Capability::Systemone);
+        let ids: Vec<_> = catalog.models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(ids, ["h2o"]);
+        assert_eq!(catalog.default_models, ["h2o"]);
+        let all = Catalog::parse(ALL_MODELS).expect("tests/fixtures/all-models.json is valid");
+        assert_eq!(all.model("clef").unwrap().capability(), Capability::Systemone);
     }
 
     #[test]
@@ -510,7 +515,7 @@ mod tests {
 
     #[test]
     fn offload_profiles_need_layers_and_host_memory_on_cuda() {
-        let mut value: serde_json::Value = serde_json::from_str(SHIPPED).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(ALL_MODELS).unwrap();
         let profiles = value["models"][0]["profiles"].as_array_mut().unwrap();
         let mut offload = profiles[0].clone();
         offload["id"] = "cuda-4096-gpu3".into();
@@ -537,7 +542,7 @@ mod tests {
         let ranked: Vec<_> = h2o.profiles_for(Accelerator::Cuda).iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ranked, ["cuda-8192", "cuda-40960-x3", "cuda-40960-x4", "cuda-40960-x6"]);
 
-        let mut value: serde_json::Value = serde_json::from_str(SHIPPED).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(ALL_MODELS).unwrap();
         value["models"][0]["profiles"][0]["parallel_slots"] = 2.into();
         let error = Catalog::parse(&value.to_string()).unwrap_err().to_string();
         assert!(error.contains("parallel_slots"), "{error}");
@@ -545,7 +550,7 @@ mod tests {
 
     #[test]
     fn model_revision_ignores_profiles() {
-        let catalog = Catalog::parse(SHIPPED).unwrap();
+        let catalog = Catalog::parse(ALL_MODELS).unwrap();
         let model = catalog.model("clef").unwrap().clone();
         let mut fewer = model.clone();
         fewer.profiles.truncate(1);

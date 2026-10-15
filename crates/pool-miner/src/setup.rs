@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn exact_startup_preserves_profile_and_placement_without_step_down() {
-        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
         let model = catalog.model("h2o").unwrap();
         let choice =
             Choice { model, profile: model.profile("cuda-40960-x4").unwrap(), placement: Placement::Published };
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn disk_plan_reserves_each_weight_once_and_honors_runtime_overrides() {
-        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
         let mut model = catalog.model("h2o").unwrap().clone();
         model.weights.size_bytes = 1_000_000_000;
         let root = std::env::temp_dir().join(format!("ai-pool-disk-plan-{}", uuid::Uuid::new_v4()));

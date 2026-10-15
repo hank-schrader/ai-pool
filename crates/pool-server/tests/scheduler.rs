@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
-const CATALOG: &str = include_str!("../../../config/models.json");
+const CATALOG: &str = include_str!("../../../tests/fixtures/all-models.json");
 
 fn config() -> Config {
     Config {
@@ -692,6 +692,27 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
         .unwrap();
     assert!(count_offload(current.clone()) > 0);
     assert!(has_h2o(&current));
+}
+
+#[tokio::test]
+async fn the_shipped_catalog_serves_only_h2o_and_turns_old_miners_away() {
+    let shipped = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+    let addr = start_with_state(AppState::new(config(), shipped)).await;
+    for features in ["", "?features=offload"] {
+        let reply = reqwest::get(format!("http://{addr}/miner/v1/catalog{features}")).await.unwrap();
+        assert_eq!(reply.status(), reqwest::StatusCode::UPGRADE_REQUIRED, "{features:?}");
+        let body: Value = reply.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "miner_outdated", "{features:?}");
+    }
+    let current: Value = reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload,h2o"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ids: Vec<_> = current["catalog"]["models"].as_array().unwrap().iter().map(|model| &model["id"]).collect();
+    assert_eq!(ids, ["h2o"]);
+    assert_eq!(current["catalog"]["default_models"], json!(["h2o"]));
 }
 
 #[tokio::test]

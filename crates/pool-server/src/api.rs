@@ -116,6 +116,13 @@ pub async fn miner_catalog(
         (true, false) => (&state.offload_catalog, &state.offload_catalog_revision),
         (false, false) => (&state.legacy_catalog, &state.legacy_catalog_revision),
     };
+    if catalog.models.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::UPGRADE_REQUIRED,
+            "miner_outdated",
+            "this pool serves only models that need a newer pool-miner; install the latest release",
+        ));
+    }
     Ok(Json(json!({ "catalog_revision": &**revision, "catalog": **catalog })))
 }
 

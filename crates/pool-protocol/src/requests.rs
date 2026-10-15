@@ -407,7 +407,7 @@ mod tests {
     use crate::catalog::Catalog;
 
     fn catalog() -> Catalog {
-        Catalog::parse(include_str!("../../../config/models.json")).unwrap()
+        Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap()
     }
 
     fn body(value: Value) -> Map<String, Value> {

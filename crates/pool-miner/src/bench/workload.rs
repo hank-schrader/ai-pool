@@ -130,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn reproducible_mix_fits_all_backends_and_limits() {
-        let catalog = Catalog::parse(include_str!("../../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../../tests/fixtures/all-models.json")).unwrap();
         for model in &catalog.models {
             let mut first = Generator::new(20261012);
             let mut second = Generator::new(20261012);
@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn profiles_share_records_and_only_trim_the_text() {
-        let catalog = Catalog::parse(include_str!("../../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../../tests/fixtures/all-models.json")).unwrap();
         for model in &catalog.models {
             let mut small = Generator::new(20261012);
             let mut large = Generator::new(20261012);

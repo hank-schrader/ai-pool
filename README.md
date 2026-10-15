@@ -2,15 +2,18 @@
 
 A miner serves ai-pool's models from your GPU. It connects out to the pool over
 HTTPS, so it needs no open ports. The examples use `https://pool.example.com`;
-replace it with the address of the pool you join. They serve `h2o`.
+replace it with the address of the pool you join. The pool serves one model,
+`h2o`.
 
 ## Requirements
 
-| | Linux (x86_64) | Windows (x86_64) | macOS (Apple Silicon) |
-|---|---|---|---|
-| GPU | NVIDIA, driver 570.26 or newer | NVIDIA, driver 615 or newer (not tested yet) | Metal; `h2o` has no Mac profile, only `clef` and `qwen2.5-1.5b-instruct` |
-| OS | glibc 2.38 or newer: Ubuntu 24.04+, Debian 13+, Fedora 39+, Arch | Windows 10/11 | Apple Silicon (M1 or newer) |
-| Libraries | `libgomp`, OpenSSL 3, `libstdc++` | included | included |
+| | Linux (x86_64) | Windows (x86_64) |
+|---|---|---|
+| GPU | NVIDIA, driver 570.26 or newer | NVIDIA, driver 615 or newer (not tested yet) |
+| OS | glibc 2.38 or newer: Ubuntu 24.04+, Debian 13+, Fedora 39+, Arch | Windows 10/11 |
+| Libraries | `libgomp`, OpenSSL 3, `libstdc++` | included |
+
+Macs cannot mine: `h2o` has no Metal profile.
 
 Memory for `h2o`:
 
@@ -30,7 +33,7 @@ problem. `run` and `bench` run the same checks before downloading the weights.
 
 ## 1. Install
 
-Linux and macOS:
+Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hank-schrader/ai-pool/main/scripts/install.sh | sh

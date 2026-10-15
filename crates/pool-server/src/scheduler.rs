@@ -1326,7 +1326,7 @@ mod tests {
             stats,
             public_stats,
             config,
-            catalog: Arc::new(Catalog::parse(include_str!("../../../config/models.json")).unwrap()),
+            catalog: Arc::new(Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap()),
             miners: HashMap::new(),
             jobs: HashMap::new(),
             queue: VecDeque::new(),

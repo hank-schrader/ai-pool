@@ -245,7 +245,10 @@ async fn get(app: &axum::Router, path: &str) -> Response {
 
 #[tokio::test]
 async fn assets_have_exact_lookup_mime_csp_and_cache_headers() {
-    let app = router(AppState::new(config(), Catalog::parse(include_str!("../../../config/models.json")).unwrap()));
+    let app = router(AppState::new(
+        config(),
+        Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap(),
+    ));
     let response = get(&app, "/").await;
     assert_eq!(response.headers()["content-type"], "text/html; charset=utf-8");
     assert_eq!(response.headers()["cache-control"], "no-cache");
@@ -287,7 +290,10 @@ async fn assets_have_exact_lookup_mime_csp_and_cache_headers() {
 
 #[tokio::test]
 async fn loopback_disconnect_releases_the_response_body_permit() {
-    let app = router(AppState::new(config(), Catalog::parse(include_str!("../../../config/models.json")).unwrap()));
+    let app = router(AppState::new(
+        config(),
+        Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap(),
+    ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

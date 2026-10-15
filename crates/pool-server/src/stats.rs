@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn validated_requests_count_systemone_questions_and_one_chat_completion() {
-        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
         for model in &catalog.models {
             let (operation, body, expected) = if model.backend == Backend::LlamaServerChat {
                 (Operation::ChatCompletions, json!({"messages": [{"role": "user", "content": "hi"}]}), 1)
