@@ -23,7 +23,42 @@ Before a request is queued, the pool asks one miner serving the model to count i
 
 Clef counts through `clef-token-count`, which runs the pinned llama-server's own prompt path. Chat models count through the runtime's `/v1/chat/completions/input_tokens`. H2O renders each question's prompt like refactor-tool and tokenizes it with its own llama-server (`/tokenize`); its count is the longest single question prompt, since questions run one after another. Counting uses no device slot.
 
-The required context is the input tokens for systemone. For H2O a profile's `context_tokens` is an inclusive prompt limit, so a prompt of exactly that many tokens fits. A longer prompt is `context_length_exceeded`; a malformed question is `invalid_request`. For chat it is input + reserved output (`max_tokens`, default 512) + 1. The pool routes to the **smallest loaded profile that fits**, then the least busy device, then round robin.
+The required context is the input tokens for systemone. For H2O a profile's `context_tokens` is an inclusive prompt limit, so a prompt of exactly that many tokens fits. A longer prompt is `context_length_exceeded`; a malformed question is `invalid_request`. For chat it is input + reserved output (`max_tokens`, default 512) + 1. The pool routes to the fitting device with the **earliest predicted finish**:
+`(outstanding work tokens + this job's work tokens) / tokens_per_second`.
+Work is `max(1, input_tokens × question_count)` (chat has one question). For H2O,
+every question runs a full forward, although `input_tokens` remains the longest
+single-question prompt for context fitting and public statistics.
+Ties prefer the smaller fitting context, then fewer busy slots, then round robin.
+Small jobs may occupy large-context slots when they are faster. The queue is
+traversed oldest first, so older long-context jobs get first pick of those slots;
+unplaceable jobs still do not block later jobs.
+
+Speed is measured per device and miner session as total successful completed work
+divided by total busy wall seconds over the latest 60 seconds of busy time.
+Subsecond completion intervals accumulate into roughly one-busy-second buckets;
+long intervals and the bucket crossing the window boundary are retained whole.
+Eviction depends on elapsed busy time, never the number of completions, so bursts
+processed microseconds apart retain the wall time spent executing their work.
+Busy means at least one dispatched attempt is still in flight, including prefetch
+waiting for a llama slot. Simultaneous completions share an interval; rates are
+bounded to 1–1,000,000 work tokens/s. Idle time and failed-only intervals are
+excluded; failed, rejected and cancelled attempts add no completed work and do
+not update the estimate. This measures single-stream speed including network at
+low load, and aggregate capacity under saturation. Unknown devices use the median
+measured rate of advertised non-draining devices, or 1,000 work tokens/s when none
+is measured. Reconnects start fresh estimates.
+
+For idle devices, samples older than 60 seconds decay toward the current prior
+with a half-life of 300 seconds. Decay alone cannot guarantee recovery when the
+prior is below the fastest device's rate, so an eligible idle device gets priority
+for one recovery probe after both its last sample and idle period reach 300
+seconds. A probe starts a fresh measurement window. Once dispatched it cannot get
+another probe until it is idle again for 300 seconds, including after failures.
+All model, context, slot, exclusion and per-client constraints still apply to
+probes. Outstanding work includes cancelled attempts until the miner confirms
+termination (or disconnects), just like slots. `GET /admin/v1/status` exposes each
+device's effective `tokens_per_second` (measured, aged or prior) and
+`outstanding_tokens` (work tokens).
 
 Clients may set the optional top-level `min_context_tokens` on either
 `POST /v1/systemone` or `POST /v1/chat/completions` (including streaming chat).

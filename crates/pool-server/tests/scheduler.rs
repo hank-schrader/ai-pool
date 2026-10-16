@@ -286,7 +286,7 @@ async fn systemone_round_trip_rewrites_model_name() {
 }
 
 #[tokio::test]
-async fn routes_to_the_smallest_profile_that_fits() {
+async fn context_constraints_and_equal_speed_prior_prefer_the_smallest_fitting_profile() {
     let addr = start(config()).await;
     let (tx, mut seen) = mpsc::unbounded_channel();
     fake_miner(addr, "small", None, &[("clef", "cuda-4096")], Behavior::Answer, tx.clone()).await;

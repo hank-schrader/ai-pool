@@ -43,6 +43,13 @@ const MAX_PENDING_COUNTS: usize = 256;
 /// Completions older than this do not count towards the observed throughput.
 const RATE_WINDOW: Duration = Duration::from_secs(60);
 const MAX_RETRY_AFTER: u64 = 60;
+/// Conservative cold-start prior and bounds for noisy/near-instant completions.
+const DEFAULT_TOKENS_PER_SECOND: f64 = 1_000.0;
+const MIN_TOKENS_PER_SECOND: f64 = 1.0;
+const MAX_TOKENS_PER_SECOND: f64 = 1_000_000.0;
+const SPEED_WINDOW: Duration = Duration::from_secs(60);
+const SPEED_AGE_THRESHOLD: Duration = Duration::from_secs(60);
+const SPEED_HALF_LIFE: Duration = Duration::from_secs(300);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -187,6 +194,12 @@ pub struct NewJob {
 impl NewJob {
     fn routing_context(&self) -> u32 {
         self.required_context.max(self.request.min_context_tokens.unwrap_or(0))
+    }
+
+    /// Every question runs a full forward; the context count is only the longest
+    /// prompt. Keep that count unchanged for context checks and public stats.
+    fn work_tokens(&self) -> u64 {
+        (u64::from(self.input_tokens) * self.request.question_count).max(1)
     }
 }
 
@@ -370,6 +383,8 @@ pub struct DeviceStatus {
     pub id: String,
     pub slots: u32,
     pub busy: u32,
+    pub tokens_per_second: f64,
+    pub outstanding_tokens: u64,
 }
 
 struct Miner {
@@ -384,12 +399,103 @@ struct Miner {
     /// Attempts holding a device slot. `job` is None once the job is gone
     /// but the miner has not yet confirmed the work stopped.
     attempts: HashMap<String, Attempt>,
+    performance: HashMap<String, DevicePerformance>,
     pending_counts: usize,
 }
 
 struct Attempt {
     job: Option<String>,
     device: String,
+    work_tokens: u64,
+}
+
+/// Completed work divided by busy wall time, never an average of per-job rates.
+/// Observations cover the latest 60 busy seconds, retaining the whole bucket
+/// crossing the boundary. Subsecond completion intervals share a bucket so burst
+/// delivery cannot evict execution time. Idle and failed-only time is excluded.
+#[derive(Default)]
+struct DevicePerformance {
+    tokens_per_second: Option<f64>,
+    outstanding_tokens: u64,
+    active: u32,
+    updated_at: Option<Instant>,
+    idle_since: Option<Instant>,
+    last_sample: Option<Instant>,
+    pending_busy_seconds: f64,
+    samples: VecDeque<(u64, f64)>,
+}
+
+impl DevicePerformance {
+    fn advance(&mut self, now: Instant) {
+        if let Some(last) = self.updated_at
+            && self.active > 0
+        {
+            self.pending_busy_seconds += now.saturating_duration_since(last).as_secs_f64();
+        }
+        self.updated_at = Some(now);
+    }
+
+    fn probe_due(&self, now: Instant) -> bool {
+        self.active == 0
+            && self.last_sample.is_some_and(|at| now.saturating_duration_since(at) >= SPEED_HALF_LIFE)
+            && self.idle_since.is_some_and(|at| now.saturating_duration_since(at) >= SPEED_HALF_LIFE)
+    }
+
+    fn rate(&self, prior: f64, now: Instant) -> f64 {
+        let Some(measured) = self.tokens_per_second else { return prior };
+        if self.active > 0 {
+            return measured;
+        }
+        let age = self.last_sample.map_or(Duration::ZERO, |at| now.saturating_duration_since(at));
+        let decay_seconds = age.saturating_sub(SPEED_AGE_THRESHOLD).as_secs_f64();
+        let weight = 2.0_f64.powf(-decay_seconds / SPEED_HALF_LIFE.as_secs_f64());
+        (weight * measured + (1.0 - weight) * prior).clamp(MIN_TOKENS_PER_SECOND, MAX_TOKENS_PER_SECOND)
+    }
+
+    fn start(&mut self, work_tokens: u64, now: Instant) {
+        // A recovery probe must replace a stale observation, rather than blend
+        // it with an old warmup/outlier that caused the starvation.
+        if self.probe_due(now) {
+            self.samples.clear();
+        }
+        self.advance(now);
+        self.active += 1;
+        self.outstanding_tokens += work_tokens;
+        self.idle_since = None;
+    }
+
+    fn finish(&mut self, attempt: &Attempt, successful: bool, now: Instant) {
+        self.advance(now);
+        self.active -= 1;
+        self.outstanding_tokens -= attempt.work_tokens;
+        if successful {
+            let seconds = std::mem::take(&mut self.pending_busy_seconds);
+            // Accumulate short intervals into roughly one-busy-second buckets.
+            // Long intervals remain whole: a delayed burst's execution time
+            // must survive until 60 later busy seconds have actually elapsed.
+            if let Some(last) = self.samples.back_mut()
+                && (last.1 < 1.0 || seconds == 0.0)
+            {
+                last.0 += attempt.work_tokens;
+                last.1 += seconds;
+            } else {
+                self.samples.push_back((attempt.work_tokens, seconds));
+            }
+            let mut seconds: f64 = self.samples.iter().map(|s| s.1).sum();
+            while self.samples.front().is_some_and(|first| seconds - first.1 >= SPEED_WINDOW.as_secs_f64()) {
+                seconds -= self.samples.pop_front().expect("checked above").1;
+            }
+            let tokens: u64 = self.samples.iter().map(|s| s.0).sum();
+            let seconds = seconds.max(0.000_001);
+            self.tokens_per_second =
+                Some((tokens as f64 / seconds).clamp(MIN_TOKENS_PER_SECOND, MAX_TOKENS_PER_SECOND));
+            self.last_sample = Some(now);
+        }
+        if self.active == 0 {
+            self.idle_since = Some(now);
+            self.pending_busy_seconds = 0.0;
+        }
+    }
 }
 
 impl Miner {
@@ -599,6 +705,7 @@ impl Scheduler {
                         draining: false,
                         last_seen: Instant::now(),
                         attempts: HashMap::new(),
+                        performance: HashMap::new(),
                         pending_counts: 0,
                     },
                 );
@@ -718,9 +825,35 @@ impl Scheduler {
         self.debug_check();
     }
 
-    /// Smallest fitting context first, then the least busy device, then round robin.
+    /// Unknown devices use the median measured rate of currently advertised,
+    /// non-draining devices. Their outstanding work still limits cold-start load.
+    fn speed_prior(&self) -> f64 {
+        let mut rates: Vec<_> = self
+            .miners
+            .values()
+            .filter(|miner| !miner.draining)
+            .flat_map(|miner| {
+                miner
+                    .devices
+                    .iter()
+                    .filter_map(|device| miner.performance.get(&device.id).and_then(|p| p.tokens_per_second))
+            })
+            .collect();
+        rates.sort_by(f64::total_cmp);
+        match rates.len() {
+            0 => DEFAULT_TOKENS_PER_SECOND,
+            n if n % 2 == 0 => (rates[n / 2 - 1] + rates[n / 2]) / 2.0,
+            n => rates[n / 2],
+        }
+    }
+
+    /// Idle recovery probes first, otherwise earliest predicted finish, then
+    /// smaller fitting context, fewer busy slots, and round robin. Small jobs
+    /// may use large contexts when faster; FIFO gives older long jobs first pick.
     fn find_slot(&self, job: &Job, rotation: usize) -> Option<(String, String, String)> {
-        let mut candidates: Vec<(u32, u32, String, String, String)> = Vec::new();
+        let prior = self.speed_prior();
+        let now = Instant::now();
+        let mut candidates = Vec::new();
         for (session, miner) in &self.miners {
             if miner.draining || job.excluded.contains(session) {
                 continue;
@@ -728,7 +861,14 @@ impl Scheduler {
             for loaded in miner.serves(&job.new.model, &job.new.model_revision) {
                 let busy = miner.busy(&loaded.device);
                 if loaded.context_tokens >= job.new.routing_context() && busy < miner.slots(&loaded.device) {
+                    let performance = miner.performance.get(&loaded.device);
+                    let rate = performance.map_or(prior, |p| p.rate(prior, now));
+                    let outstanding = performance.map_or(0, |p| p.outstanding_tokens);
+                    let finish = (outstanding + job.new.work_tokens()) as f64 / rate;
+                    let probe_due = performance.is_some_and(|p| p.probe_due(now));
                     candidates.push((
+                        !probe_due,
+                        finish,
                         loaded.context_tokens,
                         busy,
                         session.clone(),
@@ -738,10 +878,14 @@ impl Scheduler {
                 }
             }
         }
-        candidates.sort();
-        let best = candidates.first().map(|c| (c.0, c.1))?;
-        let tied: Vec<_> = candidates.into_iter().filter(|c| (c.0, c.1) == best).collect();
-        let (_, _, session, device, profile) = tied[rotation % tied.len()].clone();
+        candidates.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.1.total_cmp(&b.1))
+                .then_with(|| (&a.2, &a.3, &a.4, &a.5, &a.6).cmp(&(&b.2, &b.3, &b.4, &b.5, &b.6)))
+        });
+        let best = candidates.first().map(|c| (c.0, c.1, c.2, c.3))?;
+        let tied: Vec<_> = candidates.into_iter().filter(|c| (c.0, c.1, c.2, c.3) == best).collect();
+        let (_, _, _, _, session, device, profile) = tied[rotation % tied.len()].clone();
         Some((session, device, profile))
     }
 
@@ -769,7 +913,11 @@ impl Scheduler {
             self.remove_miner(session, "miner stopped reading");
             return;
         }
-        miner.attempts.insert(attempt.clone(), Attempt { job: Some(job_id.into()), device: device.into() });
+        let work_tokens = job.new.work_tokens();
+        miner.performance.entry(device.into()).or_default().start(work_tokens, now);
+        miner
+            .attempts
+            .insert(attempt.clone(), Attempt { job: Some(job_id.into()), device: device.into(), work_tokens });
         debug!(job = %job_id, %attempt, %session, %profile, routing_context = job.new.routing_context(), "dispatched");
         job.attempts += 1;
         self.tally.activate(&job.new.client, &job.new.model, job.new.request.question_count);
@@ -872,12 +1020,12 @@ impl Scheduler {
             }
             MinerMessage::Rejected { attempt_id, reason, message } => {
                 debug!(%session, attempt = %attempt_id, ?reason, %message, "miner rejected job");
-                if let Some(job_id) = self.release(session, &attempt_id) {
+                if let Some(job_id) = self.release(session, &attempt_id, false) {
                     self.requeue_rejected(&job_id, session, reason);
                 }
             }
             MinerMessage::Result { attempt_id, body } => {
-                if let Some(job_id) = self.release(session, &attempt_id) {
+                if let Some(job_id) = self.release(session, &attempt_id, true) {
                     let job = self.remove_job(&job_id).expect("released job exists");
                     let profile = match &job.state {
                         JobState::Dispatched { profile, .. } => profile.clone(),
@@ -892,7 +1040,7 @@ impl Scheduler {
             MinerMessage::StreamStart { .. } => {}
             MinerMessage::StreamChunk { attempt_id, seq, chunk } => self.on_chunk(session, &attempt_id, seq, chunk),
             MinerMessage::StreamEnd { attempt_id, usage } => {
-                if let Some(job_id) = self.release(session, &attempt_id) {
+                if let Some(job_id) = self.release(session, &attempt_id, true) {
                     let job = self.remove_job(&job_id).expect("released job exists");
                     if job.new.request.include_usage
                         && let Some(usage) = usage
@@ -910,12 +1058,12 @@ impl Scheduler {
             }
             MinerMessage::JobError { attempt_id, code, message } => {
                 warn!(%session, attempt = %attempt_id, ?code, %message, "job failed on miner");
-                if let Some(job_id) = self.release(session, &attempt_id) {
+                if let Some(job_id) = self.release(session, &attempt_id, false) {
                     self.on_job_error(&job_id, session, code, message);
                 }
             }
             MinerMessage::Cancelled { attempt_id } => {
-                self.release(session, &attempt_id);
+                self.release(session, &attempt_id, false);
             }
         }
         self.pump();
@@ -1036,8 +1184,14 @@ impl Scheduler {
     }
 
     /// Frees the attempt's slot; returns its job if that job is still waiting on it.
-    fn release(&mut self, session: &str, attempt_id: &str) -> Option<String> {
-        let attempt = self.miners.get_mut(session)?.attempts.remove(attempt_id)?;
+    fn release(&mut self, session: &str, attempt_id: &str, successful: bool) -> Option<String> {
+        let miner = self.miners.get_mut(session)?;
+        let attempt = miner.attempts.remove(attempt_id)?;
+        miner.performance.get_mut(&attempt.device).expect("dispatched device has performance state").finish(
+            &attempt,
+            successful && attempt.job.is_some(),
+            Instant::now(),
+        );
         let job_id = attempt.job?;
         let job = self.jobs.get(&job_id)?;
         matches!(&job.state, JobState::Dispatched { attempt, .. } if attempt == attempt_id).then_some(job_id)
@@ -1229,6 +1383,7 @@ impl Scheduler {
                 entry.queued_requests += 1;
             }
         }
+        let prior = self.speed_prior();
         let mut miners: Vec<MinerStatus> = self
             .miners
             .iter()
@@ -1240,7 +1395,16 @@ impl Scheduler {
                 devices: miner
                     .devices
                     .iter()
-                    .map(|d| DeviceStatus { id: d.id.clone(), slots: d.slots, busy: miner.busy(&d.id) })
+                    .map(|d| {
+                        let performance = miner.performance.get(&d.id);
+                        DeviceStatus {
+                            id: d.id.clone(),
+                            slots: d.slots,
+                            busy: miner.busy(&d.id),
+                            tokens_per_second: performance.map_or(prior, |p| p.rate(prior, now)),
+                            outstanding_tokens: performance.map_or(0, |p| p.outstanding_tokens),
+                        }
+                    })
                     .collect(),
                 models: miner.models.clone(),
                 draining: miner.draining,
@@ -1390,6 +1554,439 @@ mod tests {
             required_context: counted,
             request: requests::validate(Operation::Systemone, model, body.as_object().unwrap().clone()).unwrap(),
         }
+    }
+
+    fn speed(scheduler: &mut Scheduler, session: &str, rate: f64, slots: u32) {
+        let miner = scheduler.miners.get_mut(session).unwrap();
+        miner.devices[0].slots = slots;
+        let performance = miner.performance.entry("gpu0".into()).or_default();
+        performance.tokens_per_second = Some(rate);
+        performance.last_sample = Some(Instant::now());
+        performance.idle_since = Some(Instant::now());
+    }
+
+    fn enqueue(scheduler: &mut Scheduler, id: &str, tokens: u32) -> mpsc::Receiver<JobEvent> {
+        let (events, receiver) = mpsc::channel(8);
+        scheduler.admit(job(scheduler, id, tokens, None), events).unwrap();
+        receiver
+    }
+
+    fn selected(scheduler: &Scheduler, id: &str, rotation: usize) -> String {
+        scheduler.find_slot(&scheduler.jobs[id], rotation).unwrap().0
+    }
+
+    #[test]
+    fn faster_large_device_wins_at_low_load_then_slow_device_helps_under_load() {
+        let mut scheduler = scheduler();
+        let mut slow = miner(&mut scheduler, "slow", "cuda-4096");
+        let mut fast = miner(&mut scheduler, "fast", "cuda-16384");
+        speed(&mut scheduler, "slow", 600.0, 2);
+        speed(&mut scheduler, "fast", 4500.0, 12);
+        scheduler.config.max_active_per_client = None;
+        let _events = enqueue(&mut scheduler, "first", 1700);
+        scheduler.pump();
+        assert!(slow.try_recv().is_err());
+        assert!(matches!(fast.try_recv().unwrap(), PoolMessage::Job { job_id, .. } if job_id == "first"));
+        // Seven jobs still predict <= 2.65s on fast, versus 2.83s on slow.
+        let _events: Vec<_> = (2..=8).map(|i| enqueue(&mut scheduler, &format!("job{i}"), 1700)).collect();
+        scheduler.pump();
+        assert_eq!(scheduler.miners["fast"].busy("gpu0"), 7);
+        assert_eq!(scheduler.miners["slow"].busy("gpu0"), 1);
+        assert!(matches!(slow.try_recv().unwrap(), PoolMessage::Job { .. }));
+        let snapshot = scheduler.snapshot();
+        let device = &snapshot.miners.iter().find(|m| m.session_id == "fast").unwrap().devices[0];
+        assert_eq!(device.tokens_per_second, 4500.0);
+        assert_eq!(device.outstanding_tokens, 7 * 1700);
+    }
+
+    #[test]
+    fn unknown_devices_use_median_prior_and_outstanding_work_prevents_hogging() {
+        let mut scheduler = scheduler();
+        let _a = miner(&mut scheduler, "a", "cuda-16384");
+        let _b = miner(&mut scheduler, "b", "cuda-16384");
+        let _new = miner(&mut scheduler, "new", "cuda-4096");
+        assert_eq!(scheduler.speed_prior(), DEFAULT_TOKENS_PER_SECOND);
+        speed(&mut scheduler, "a", 2000.0, 12);
+        assert_eq!(scheduler.speed_prior(), 2000.0);
+        speed(&mut scheduler, "b", 4000.0, 12);
+        scheduler.miners.get_mut("new").unwrap().devices[0].slots = 12;
+        assert_eq!(scheduler.speed_prior(), 3000.0);
+        let _first = enqueue(&mut scheduler, "first", 100);
+        assert_eq!(selected(&scheduler, "first", 0), "b");
+        scheduler.pump();
+        let _next = enqueue(&mut scheduler, "next", 100);
+        assert_eq!(selected(&scheduler, "next", 0), "new");
+        scheduler.pump();
+        let _third = enqueue(&mut scheduler, "third", 100);
+        assert_eq!(selected(&scheduler, "third", 0), "a");
+        // Repeated capacity announcements do not reset a learned rate.
+        let devices = scheduler.miners["a"].devices.clone();
+        let models = scheduler.miners["a"].models.clone();
+        scheduler.on_capacity("a", devices, models);
+        assert_eq!(scheduler.miners["a"].performance["gpu0"].tokens_per_second, Some(2000.0));
+        scheduler.remove_miner("a", "test reconnect");
+        let _reconnected = miner(&mut scheduler, "reconnected", "cuda-16384");
+        assert!(scheduler.miners["reconnected"].performance.values().all(|p| p.tokens_per_second.is_none()));
+        assert_eq!(scheduler.speed_prior(), 4000.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn completions_update_speed_excluding_idle_time_and_duplicate_results() {
+        let mut scheduler = scheduler();
+        let mut outbound = miner(&mut scheduler, "miner", "cuda-4096");
+        let _first = enqueue(&mut scheduler, "first", 1000);
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = outbound.try_recv().unwrap() else { panic!("expected job") };
+        tokio::time::advance(Duration::from_secs(2)).await;
+        let result = MinerMessage::Result { attempt_id, body: json!({}) };
+        scheduler.on_miner_message("miner", result.clone());
+        scheduler.on_miner_message("miner", result);
+        assert_eq!(scheduler.miners["miner"].performance["gpu0"].tokens_per_second, Some(500.0));
+        tokio::time::advance(Duration::from_secs(30)).await;
+        let _second = enqueue(&mut scheduler, "second", 1000);
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = outbound.try_recv().unwrap() else { panic!("expected job") };
+        tokio::time::advance(Duration::from_secs(1)).await;
+        scheduler.on_miner_message("miner", MinerMessage::StreamEnd { attempt_id, usage: None });
+        assert_eq!(scheduler.miners["miner"].performance["gpu0"].tokens_per_second, Some(2000.0 / 3.0));
+        assert_eq!(scheduler.miners["miner"].performance["gpu0"].outstanding_tokens, 0);
+    }
+
+    #[test]
+    fn concurrent_completions_measure_aggregate_capacity_and_ignore_other_devices() {
+        let mut a = DevicePerformance::default();
+        let mut b = DevicePerformance::default();
+        let now = Instant::now();
+        a.start(1000, now);
+        a.start(1000, now);
+        b.start(100, now);
+        let first = Attempt { job: Some("a".into()), device: "gpu0".into(), work_tokens: 1000 };
+        let second = Attempt { job: Some("b".into()), device: "gpu0".into(), work_tokens: 1000 };
+        let other = Attempt { job: Some("c".into()), device: "gpu1".into(), work_tokens: 100 };
+        a.finish(&first, true, now + Duration::from_secs(2));
+        a.finish(&second, true, now + Duration::from_secs(2));
+        b.finish(&other, true, now + Duration::from_secs(2));
+        assert_eq!(a.tokens_per_second, Some(1000.0));
+        assert_eq!(b.tokens_per_second, Some(50.0));
+        assert_eq!((a.active, a.outstanding_tokens), (0, 0));
+    }
+
+    #[test]
+    fn two_prefetch_waves_measure_work_over_busy_wall_time() {
+        let mut performance = DevicePerformance::default();
+        let now = Instant::now();
+        let attempts: Vec<_> = (0..12)
+            .map(|i| {
+                performance.start(1000, now);
+                Attempt { job: Some(i.to_string()), device: "gpu0".into(), work_tokens: 1000 }
+            })
+            .collect();
+        for attempt in &attempts[..6] {
+            performance.finish(attempt, true, now + Duration::from_secs(1));
+        }
+        assert_eq!(performance.tokens_per_second, Some(6000.0));
+        for attempt in &attempts[6..] {
+            performance.finish(attempt, true, now + Duration::from_secs(2));
+        }
+        assert_eq!(performance.tokens_per_second, Some(6000.0));
+        assert_eq!(performance.outstanding_tokens, 0);
+    }
+
+    #[test]
+    fn staggered_completion_burst_retains_its_execution_time() {
+        let mut performance = DevicePerformance::default();
+        let now = Instant::now();
+        let attempts: Vec<_> = (0..128)
+            .map(|i| {
+                performance.start(1000, now);
+                Attempt { job: Some(i.to_string()), device: "gpu0".into(), work_tokens: 1000 }
+            })
+            .collect();
+        for (i, attempt) in attempts.iter().enumerate() {
+            performance.finish(attempt, true, now + Duration::from_secs(30) + Duration::from_micros(i as u64));
+        }
+        let expected = 128000.0 / (30.0 + 0.000127);
+        assert!((performance.tokens_per_second.unwrap() - expected).abs() < 0.001);
+        assert_eq!(performance.outstanding_tokens, 0);
+        assert_eq!(performance.samples.len(), 2);
+    }
+
+    #[test]
+    fn observation_window_rolls_over_after_sixty_busy_seconds_excluding_idle() {
+        let mut performance = DevicePerformance::default();
+        let mut now = Instant::now();
+        let mut attempt = Attempt { job: Some("old".into()), device: "gpu0".into(), work_tokens: 6000 };
+        performance.start(attempt.work_tokens, now);
+        now += SPEED_WINDOW;
+        performance.finish(&attempt, true, now);
+        assert_eq!(performance.tokens_per_second, Some(100.0));
+        // Idle beyond the observation window cannot evict busy history (keep
+        // below the separate 300-second recovery-probe reset threshold).
+        now += Duration::from_secs(120);
+        attempt.work_tokens = 1000;
+        for second in 1..=60 {
+            performance.start(attempt.work_tokens, now);
+            now += Duration::from_secs(1);
+            performance.finish(&attempt, true, now);
+            if second == 59 {
+                assert!((performance.tokens_per_second.unwrap() - 65000.0 / 119.0).abs() < 0.001);
+            }
+        }
+        assert_eq!(performance.tokens_per_second, Some(1000.0));
+        assert_eq!(performance.samples.iter().map(|s| s.1).sum::<f64>(), 60.0);
+        assert_eq!(performance.samples.iter().map(|s| s.0).sum::<u64>(), 60000);
+        // Rollover continues with a bounded number of time buckets.
+        for _ in 0..100 {
+            performance.start(attempt.work_tokens, now);
+            now += Duration::from_secs(1);
+            performance.finish(&attempt, true, now);
+        }
+        assert_eq!(performance.tokens_per_second, Some(1000.0));
+        assert_eq!(performance.samples.len(), 60);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_probe_recovers_an_underestimated_device_with_sequential_traffic() {
+        let mut scheduler = scheduler();
+        let mut recovering = miner(&mut scheduler, "recovering", "cuda-16384");
+        let _warmup = enqueue(&mut scheduler, "warmup", 1000);
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = recovering.try_recv().unwrap() else { panic!("expected warmup") };
+        tokio::time::advance(Duration::from_secs(2)).await;
+        scheduler.on_miner_message("recovering", MinerMessage::Result { attempt_id, body: json!({}) });
+        assert_eq!(scheduler.miners["recovering"].performance["gpu0"].tokens_per_second, Some(500.0));
+        let mut steady = miner(&mut scheduler, "steady", "cuda-4096");
+        speed(&mut scheduler, "steady", 6000.0, 1);
+        let idle_at = Instant::now();
+        // Only one job in flight: outstanding work never forces exploration.
+        let mut receivers = Vec::new();
+        for seconds in [0, 60, 120, 180, 240] {
+            tokio::time::advance((idle_at + Duration::from_secs(seconds)).saturating_duration_since(Instant::now()))
+                .await;
+            let id = format!("sequential{seconds}");
+            receivers.push(enqueue(&mut scheduler, &id, 1000));
+            assert_eq!(selected(&scheduler, &id, 0), "steady");
+            scheduler.pump();
+            let PoolMessage::Job { attempt_id, .. } = steady.try_recv().unwrap() else { panic!("expected steady job") };
+            tokio::time::advance(Duration::from_millis(167)).await;
+            scheduler.on_miner_message("steady", MinerMessage::Result { attempt_id, body: json!({}) });
+        }
+        tokio::time::advance((idle_at + SPEED_HALF_LIFE).saturating_duration_since(Instant::now())).await;
+        let _probe = enqueue(&mut scheduler, "probe", 1000);
+        assert_eq!(selected(&scheduler, "probe", 0), "recovering");
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = recovering.try_recv().unwrap() else { panic!("expected probe") };
+        tokio::time::advance(Duration::from_millis(100)).await;
+        scheduler.on_miner_message("recovering", MinerMessage::Result { attempt_id, body: json!({}) });
+        assert!((scheduler.miners["recovering"].performance["gpu0"].tokens_per_second.unwrap() - 10000.0).abs() < 0.01);
+        let _next = enqueue(&mut scheduler, "next", 1000);
+        assert_eq!(selected(&scheduler, "next", 0), "recovering");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn known_slow_devices_get_at_most_one_probe_per_idle_half_life() {
+        let mut scheduler = scheduler();
+        let mut slow = miner(&mut scheduler, "slow", "cuda-16384");
+        let _steady = miner(&mut scheduler, "steady", "cuda-4096");
+        speed(&mut scheduler, "slow", 500.0, 2);
+        speed(&mut scheduler, "steady", 6000.0, 1);
+        let now = Instant::now();
+        let performance = &scheduler.miners["slow"].performance["gpu0"];
+        assert_eq!(performance.rate(6000.0, now + SPEED_AGE_THRESHOLD), 500.0);
+        assert_eq!(performance.rate(6000.0, now + SPEED_AGE_THRESHOLD + SPEED_HALF_LIFE), 3250.0);
+        let _probe = enqueue(&mut scheduler, "probe", 1000);
+        tokio::time::advance(SPEED_HALF_LIFE - Duration::from_secs(1)).await;
+        // The steady device is serving the low-concurrency traffic, so its
+        // successful observations remain fresh while the slow device is idle.
+        speed(&mut scheduler, "steady", 6000.0, 1);
+        assert_eq!(selected(&scheduler, "probe", 0), "steady");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(selected(&scheduler, "probe", 0), "slow");
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = slow.try_recv().unwrap() else { panic!("expected probe") };
+        // A second free slot does not allow a second probe while the first runs.
+        let _other = enqueue(&mut scheduler, "other", 1000);
+        assert_eq!(selected(&scheduler, "other", 0), "steady");
+        scheduler.drop_job("other", None);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        scheduler.on_miner_message("slow", MinerMessage::Result { attempt_id, body: json!({}) });
+        assert_eq!(scheduler.miners["slow"].performance["gpu0"].tokens_per_second, Some(500.0));
+        let finished_at = Instant::now();
+        for seconds in [0, 60, 120, 240, 299, 300] {
+            tokio::time::advance(
+                (finished_at + Duration::from_secs(seconds)).saturating_duration_since(Instant::now()),
+            )
+            .await;
+            speed(&mut scheduler, "steady", 6000.0, 1);
+            let id = format!("later{seconds}");
+            let _events = enqueue(&mut scheduler, &id, 1000);
+            assert_eq!(selected(&scheduler, &id, 0), if seconds < 300 { "steady" } else { "slow" });
+            scheduler.drop_job(&id, None);
+        }
+        let _failed = enqueue(&mut scheduler, "failed_probe", 1000);
+        scheduler.pump();
+        let PoolMessage::Job { attempt_id, .. } = slow.try_recv().unwrap() else { panic!("expected second probe") };
+        tokio::time::advance(Duration::from_secs(1)).await;
+        scheduler.on_miner_message(
+            "slow",
+            MinerMessage::JobError { attempt_id, code: JobErrorCode::InvalidRequest, message: "failed probe".into() },
+        );
+        let performance = &scheduler.miners["slow"].performance["gpu0"];
+        assert_eq!(performance.tokens_per_second, Some(500.0));
+        assert!(!performance.probe_due(Instant::now() + SPEED_HALF_LIFE - Duration::from_secs(1)));
+        assert!(performance.probe_due(Instant::now() + SPEED_HALF_LIFE));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mixed_h2o_question_counts_use_total_work_but_keep_prompt_context_and_stats() {
+        let mut scheduler = scheduler();
+        let mut slow = miner_model(&mut scheduler, "slow", "h2o", "cuda-8192");
+        let mut fast = miner_model(&mut scheduler, "fast", "h2o", "cuda-40960-x6");
+        speed(&mut scheduler, "slow", 1000.0, 2);
+        speed(&mut scheduler, "fast", 4000.0, 12);
+        let mut receivers = Vec::new();
+        for (id, count, expected) in [("multi", 4, "fast"), ("single", 1, "slow")] {
+            let model = scheduler.catalog.model("h2o").unwrap();
+            let questions: serde_json::Map<String, Value> =
+                (0..count).map(|i| (i.to_string(), json!({"type": "noul", "instructions": "test"}))).collect();
+            let payload = json!({"state": "test", "questions": questions});
+            let new = NewJob {
+                id: id.into(),
+                client: "client".into(),
+                model: model.id.clone(),
+                model_revision: scheduler.catalog.model_revision(model),
+                input_tokens: 1000,
+                required_context: 1000,
+                request: requests::validate(Operation::Systemone, model, payload.as_object().unwrap().clone()).unwrap(),
+            };
+            assert_eq!(new.work_tokens(), 1000 * count);
+            assert_eq!(new.routing_context(), 1000);
+            let (events, receiver) = mpsc::channel(8);
+            receivers.push(receiver);
+            scheduler.admit(new, events).unwrap();
+            assert_eq!(selected(&scheduler, id, 0), expected);
+            scheduler.pump();
+        }
+        assert_eq!(scheduler.miners["fast"].performance["gpu0"].outstanding_tokens, 4000);
+        assert_eq!(scheduler.miners["slow"].performance["gpu0"].outstanding_tokens, 1000);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        for (session, outbound, expected_rate) in [("fast", &mut fast, 4000.0), ("slow", &mut slow, 1000.0)] {
+            let PoolMessage::Job { attempt_id, input_tokens, required_context_tokens, .. } =
+                outbound.try_recv().unwrap()
+            else {
+                panic!("expected job")
+            };
+            assert_eq!((input_tokens, required_context_tokens), (1000, 1000));
+            scheduler.on_miner_message(session, MinerMessage::Result { attempt_id, body: json!({}) });
+            assert_eq!(scheduler.miners[session].performance["gpu0"].tokens_per_second, Some(expected_rate));
+            assert_eq!(scheduler.miners[session].performance["gpu0"].outstanding_tokens, 0);
+        }
+        let stats = scheduler.stats.snapshot(0, 0, 0);
+        assert_eq!(stats.average_prompt_tokens, Some(1000.0));
+        assert_eq!(stats.answered_per_second, 5.0 / 60.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_rejected_cancelled_and_late_success_attempts_do_not_train_speed() {
+        for outcome in 0..5 {
+            let mut scheduler = scheduler();
+            let mut outbound = miner(&mut scheduler, "miner", "cuda-4096");
+            speed(&mut scheduler, "miner", 500.0, 2);
+            let _events = enqueue(&mut scheduler, "job", 1000);
+            scheduler.pump();
+            let PoolMessage::Job { attempt_id, .. } = outbound.try_recv().unwrap() else { panic!("expected job") };
+            tokio::time::advance(Duration::from_secs(1)).await;
+            let terminal = match outcome {
+                0 => MinerMessage::JobError { attempt_id, code: JobErrorCode::InvalidRequest, message: "bad".into() },
+                1 => MinerMessage::Rejected { attempt_id, reason: RejectReason::Busy, message: "busy".into() },
+                _ => {
+                    scheduler.drop_job("job", None);
+                    assert_eq!(scheduler.miners["miner"].performance["gpu0"].outstanding_tokens, 1000);
+                    assert_eq!(scheduler.miners["miner"].busy("gpu0"), 1);
+                    match outcome {
+                        2 => MinerMessage::Cancelled { attempt_id },
+                        3 => MinerMessage::Result { attempt_id, body: json!({}) },
+                        _ => MinerMessage::StreamEnd { attempt_id, usage: None },
+                    }
+                }
+            };
+            scheduler.on_miner_message("miner", terminal);
+            let performance = &scheduler.miners["miner"].performance["gpu0"];
+            assert_eq!(performance.tokens_per_second, Some(500.0));
+            assert_eq!(performance.outstanding_tokens, 0);
+            assert_eq!(performance.active, 0);
+            // Failed-only busy time and the following idle gap must not leak
+            // into a later successful observation's denominator.
+            tokio::time::advance(Duration::from_secs(30)).await;
+            let _later = enqueue(&mut scheduler, "later", 1000);
+            scheduler.pump();
+            let attempt_id = loop {
+                if let PoolMessage::Job { attempt_id, job_id, .. } = outbound.try_recv().unwrap()
+                    && job_id == "later"
+                {
+                    break attempt_id;
+                }
+            };
+            tokio::time::advance(Duration::from_secs(1)).await;
+            scheduler.on_miner_message("miner", MinerMessage::Result { attempt_id, body: json!({}) });
+            assert_eq!(scheduler.miners["miner"].performance["gpu0"].tokens_per_second, Some(1000.0));
+        }
+    }
+
+    #[test]
+    fn speed_samples_are_bounded_and_zero_token_jobs_have_minimal_work() {
+        for (tokens, duration, expected) in [
+            (u64::from(u32::MAX), Duration::ZERO, Some(MAX_TOKENS_PER_SECOND)),
+            (1, Duration::from_secs(10), Some(MIN_TOKENS_PER_SECOND)),
+        ] {
+            let mut performance = DevicePerformance::default();
+            let now = Instant::now();
+            performance.start(tokens, now);
+            let attempt = Attempt { job: Some("j".into()), device: "gpu0".into(), work_tokens: tokens };
+            performance.finish(&attempt, true, now + duration);
+            assert_eq!(performance.tokens_per_second, expected);
+        }
+        let scheduler = scheduler();
+        assert_eq!(job(&scheduler, "zero", 0, None).work_tokens(), 1);
+    }
+
+    #[test]
+    fn older_long_job_gets_large_slot_before_faster_short_job() {
+        let mut scheduler = scheduler();
+        let mut small = miner(&mut scheduler, "small", "cuda-4096");
+        let mut large = miner(&mut scheduler, "large", "cuda-16384");
+        speed(&mut scheduler, "small", 100.0, 1);
+        speed(&mut scheduler, "large", 10000.0, 1);
+        let _long = enqueue(&mut scheduler, "long", 5000);
+        let _short = enqueue(&mut scheduler, "short", 100);
+        scheduler.pump();
+        assert!(matches!(large.try_recv().unwrap(), PoolMessage::Job { job_id, .. } if job_id == "long"));
+        assert!(matches!(small.try_recv().unwrap(), PoolMessage::Job { job_id, .. } if job_id == "short"));
+    }
+
+    #[test]
+    fn equal_finish_prefers_small_context_then_fewer_busy_slots_then_rotation() {
+        let mut scheduler = scheduler();
+        let _small = miner(&mut scheduler, "small", "cuda-4096");
+        let _a = miner(&mut scheduler, "a", "cuda-16384");
+        let _b = miner(&mut scheduler, "b", "cuda-16384");
+        speed(&mut scheduler, "a", 1000.0, 1);
+        speed(&mut scheduler, "b", 1000.0, 1);
+        let _first = enqueue(&mut scheduler, "first", 100);
+        assert_eq!(selected(&scheduler, "first", 0), "small");
+        scheduler.pump();
+        let _next = enqueue(&mut scheduler, "next", 100);
+        assert_eq!(selected(&scheduler, "next", 0), "a");
+        assert_eq!(selected(&scheduler, "next", 1), "b");
+        // Equal finish despite one device having more outstanding jobs.
+        speed(&mut scheduler, "small", 2000.0, 2);
+        assert_eq!(selected(&scheduler, "next", 0), "small"); // context breaks tie first
+        scheduler.miners.get_mut("small").unwrap().models[0].context_tokens = 16384;
+        assert_eq!(selected(&scheduler, "next", 0), "a"); // fewer busy slots
+        scheduler.jobs.get_mut("next").unwrap().excluded.insert("a".into());
+        assert_eq!(selected(&scheduler, "next", 0), "b");
+        scheduler.miners.get_mut("b").unwrap().draining = true;
+        assert_eq!(selected(&scheduler, "next", 0), "small");
     }
 
     #[test]

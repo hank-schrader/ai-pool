@@ -112,6 +112,13 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
     assert_eq!(scheduler.stats().answered_per_second, 3.0 / 60.0);
     assert_eq!(scheduler.stats().average_prompt_tokens, Some(100.0));
     assert_eq!(scheduler.stats().answering_questions, 0);
+    let response =
+        app.clone().oneshot(Request::builder().uri("/admin/v1/status").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let status: Value = serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+    let device = &status["scheduler"]["miners"][0]["devices"][0];
+    assert!(device["tokens_per_second"].as_f64().unwrap() > 0.0);
+    assert_eq!(device["outstanding_tokens"], 0);
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(61)).await;
     scheduler.snapshot().await;
