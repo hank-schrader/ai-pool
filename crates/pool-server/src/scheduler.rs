@@ -1460,7 +1460,6 @@ mod tests {
             bind: "127.0.0.1:0".parse().unwrap(),
             catalog: "config/models.json".into(),
             auth_mode: crate::config::AuthMode::Local,
-            client_api_keys: vec![],
             miner_tokens: vec![],
             miner_auth: crate::config::MinerAuth::Token,
             max_miners: 256,

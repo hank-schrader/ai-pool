@@ -4,10 +4,39 @@ Miners connect outbound, so they work behind NAT without any open ports. All
 messages are JSON text frames, tagged by `type`; the types live in
 `crates/pool-protocol/src/messages.rs`.
 
+## Client access and admission
+
+Clients need only the pool URL. `GET /v1/models`, `GET /v1/models/{id}`,
+`POST /v1/systemone` and `POST /v1/chat/completions` are public in both
+`POOL_AUTH_MODE=local` and `keys`. They ignore any `Authorization` header;
+missing or incorrect credentials never produce HTTP 401 on these routes.
+
+```sh
+curl https://pool.example.com/v1/models
+curl https://pool.example.com/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"h2o","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
+```
+
+Every inference request uses the client label `public` for fairness and logs.
+`POOL_MAX_ACTIVE_PER_CLIENT` and `POOL_MAX_QUEUED_PER_CLIENT` therefore cap all
+callers together, across models and inference routes. Unset means unlimited.
+Authorization headers do not create separate client identities. When both limits
+are set, their sum also bounds requests being read, parsed or token-counted;
+requests beyond that capacity fail immediately with HTTP 429
+`rate_limit_exceeded` and `Retry-After`. The active limit controls dispatch, so
+additional requests wait in the shared queue. Full pool/model queues return HTTP
+503 `pool_overloaded` instead.
+
+`POOL_AUTH_MODE=local` still permits only loopback binds and opens miner/admin
+routes for development. In `keys` mode, miner routes require a token from
+`POOL_MINER_TOKENS` unless `POOL_MINER_AUTH=open`; `GET /admin/v1/status` requires
+`POOL_ADMIN_TOKEN` and returns HTTP 401 for missing or incorrect tokens.
+
 ## Connection
 
 1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models. Miners reject unknown catalog fields, so the pool leaves out what a miner did not ask for: offload profiles unless `?features=offload`, and `h2o` models (backend `llama-server-h2o`, profile field `parallel_slots`) unless `?features=offload,h2o`.
-2. `GET /miner/v1/connect` upgrades to WebSocket with subprotocol `ai-pool.v1`. In `keys` mode it needs `Authorization: Bearer <miner token>`; client API keys are rejected. Frames are limited to 4 MiB.
+2. `GET /miner/v1/connect` upgrades to WebSocket with subprotocol `ai-pool.v1`. In `keys` mode with `POOL_MINER_AUTH=token`, both miner routes need `Authorization: Bearer <miner token>` from `POOL_MINER_TOKENS`; `POOL_MINER_AUTH=open` accepts anonymous miners. Frames are limited to 4 MiB.
 3. The miner sends `hello` within 10 s: protocol version, installation `miner_id`, version, catalog revision and hardware. The pool answers `welcome {session_id, heartbeat_seconds}`, or `error` and closes (e.g. `protocol_mismatch`).
 4. The miner sends `capacity`, a full snapshot of devices (`slots` concurrent inferences each) and loaded models (`model`, `model_revision`, `profile`, `device`, `context_tokens`). The pool ignores entries whose revision or profile does not match its catalog. A new snapshot replaces the old one.
 5. The miner sends `heartbeat {active_attempts}` every `heartbeat_seconds`. After three intervals of silence the pool drops the miner. The pool pings every 15 s.
@@ -107,7 +136,8 @@ A job is retried **once**, on a different miner, if its miner disconnects, fails
 `GET /` serves the Svelte status page. `GET /v1/stats` and
 `GET /v1/stats/stream` expose only pool totals, without miner/client identities.
 These routes, `/assets/{path}`, `/healthz` and `/readyz` are unauthenticated,
-including in `keys` mode; client, miner and admin routes keep their authentication.
+including in `keys` mode. Model and inference routes are also public; miner and
+admin routes follow the authentication settings described above.
 The page uses same-origin assets and connections, with no inline scripts or styles.
 Its HTML uses `Cache-Control: no-cache`, hashed assets use
 `public, max-age=31536000, immutable`, and all embedded assets use

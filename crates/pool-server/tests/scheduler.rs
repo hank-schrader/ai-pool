@@ -19,6 +19,8 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
+mod support;
+
 const CATALOG: &str = include_str!("../../../tests/fixtures/all-models.json");
 
 fn config() -> Config {
@@ -26,7 +28,6 @@ fn config() -> Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         catalog: "config/models.json".into(),
         auth_mode: AuthMode::Local,
-        client_api_keys: vec![],
         miner_tokens: vec![],
         miner_auth: MinerAuth::Token,
         max_miners: 256,
@@ -52,7 +53,7 @@ async fn start(config: Config) -> SocketAddr {
 }
 
 async fn start_with_state(state: AppState) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = support::listener().await;
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
     addr
@@ -578,33 +579,45 @@ async fn non_streaming_chat_gets_a_pool_completion_id() {
 }
 
 #[tokio::test]
-async fn keys_mode_requires_credentials() {
+async fn token_pools_authenticate_miners_and_accept_public_inference() {
     let mut config = config();
     config.auth_mode = AuthMode::Keys;
-    config.client_api_keys = vec!["client-secret".into()];
     config.miner_tokens = vec!["miner-secret".into()];
     let addr = start(config).await;
 
-    let client = reqwest::Client::new();
-    let url = format!("http://{addr}/v1/models");
-    assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
-    assert_eq!(client.get(&url).bearer_auth("wrong").send().await.unwrap().status(), 401);
-    assert_eq!(client.get(&url).bearer_auth("client-secret").send().await.unwrap().status(), 200);
-
-    let mut request = format!("ws://{addr}/miner/v1/connect").into_client_request().unwrap();
-    request.headers_mut().insert("authorization", "Bearer client-secret".parse().unwrap());
-    assert!(tokio_tungstenite::connect_async(request).await.is_err(), "client keys cannot register miners");
+    for token in [None, Some("wrong")] {
+        let mut request = format!("ws://{addr}/miner/v1/connect").into_client_request().unwrap();
+        request.headers_mut().insert("sec-websocket-protocol", SUBPROTOCOL.parse().unwrap());
+        if let Some(token) = token {
+            request.headers_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        }
+        match tokio_tungstenite::connect_async(request).await.unwrap_err() {
+            tokio_tungstenite::tungstenite::Error::Http(response) => assert_eq!(response.status(), 401),
+            error => panic!("expected HTTP 401, got {error}"),
+        }
+    }
 
     let (tx, _seen) = mpsc::unbounded_channel();
-    fake_miner(addr, "a", Some("miner-secret"), &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
-    let response = client
-        .post(format!("http://{addr}/v1/systemone"))
-        .bearer_auth("client-secret")
-        .json(&clef_request(10))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
+    fake_miner(
+        addr,
+        "a",
+        Some("miner-secret"),
+        &[("clef", "cuda-4096"), ("qwen2.5-1.5b-instruct", "cuda-4096")],
+        Behavior::Answer,
+        tx,
+    )
+    .await;
+    wait_ready(addr, "clef", 1).await;
+    let client = reqwest::Client::new();
+    for authorization in [None, Some("Bearer wrong"), Some("arbitrary")] {
+        for (path, body) in [("/v1/systemone", clef_request(10)), ("/v1/chat/completions", chat_request(10, false))] {
+            let mut request = client.post(format!("http://{addr}{path}")).json(&body);
+            if let Some(value) = authorization {
+                request = request.header("authorization", value);
+            }
+            assert_eq!(request.send().await.unwrap().status(), 200, "{path} {authorization:?}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -626,10 +639,9 @@ async fn fails_fast_when_no_other_miner_can_retry() {
 }
 
 #[tokio::test]
-async fn open_pools_take_anonymous_miners_but_still_need_client_keys() {
+async fn open_pools_take_anonymous_miners_and_public_inference() {
     let mut config = config();
     config.auth_mode = AuthMode::Keys;
-    config.client_api_keys = vec!["client-secret".into()];
     config.miner_auth = MinerAuth::Open;
     let addr = start(config).await;
 
@@ -637,8 +649,9 @@ async fn open_pools_take_anonymous_miners_but_still_need_client_keys() {
     fake_miner(addr, "anon", None, &[("clef", "cuda-4096")], Behavior::Answer, tx).await;
     let client = reqwest::Client::new();
     let url = format!("http://{addr}/v1/systemone");
-    assert_eq!(client.post(&url).json(&clef_request(10)).send().await.unwrap().status(), 401);
-    let response = client.post(&url).bearer_auth("client-secret").json(&clef_request(10)).send().await.unwrap();
+    wait_ready(addr, "clef", 1).await;
+    assert_eq!(client.post(&url).json(&clef_request(10)).send().await.unwrap().status(), 200);
+    let response = client.post(&url).header("authorization", "arbitrary").json(&clef_request(10)).send().await.unwrap();
     assert_eq!(response.status(), 200);
 }
 
@@ -774,4 +787,58 @@ async fn completed_multi_question_jobs_increment_public_answered_totals() {
     assert_eq!(stats["answered_last_24h"], 3);
     assert_eq!(stats["history"]["answered"].as_array().unwrap().iter().map(|n| n.as_u64().unwrap()).sum::<u64>(), 3);
     assert_eq!(stats["answered_per_second"], 0.0);
+}
+
+#[tokio::test]
+async fn public_requests_share_active_and_queued_limits_across_authorization_headers() {
+    let mut config = config();
+    config.auth_mode = AuthMode::Keys;
+    config.miner_auth = MinerAuth::Open;
+    config.max_active_per_client = Some(1);
+    config.max_queued_per_client = Some(1);
+    let state = AppState::new(config, Catalog::parse(CATALOG).unwrap());
+    let scheduler = state.scheduler.clone();
+    let addr = start_with_state(state).await;
+    let (tx, _seen) = mpsc::unbounded_channel();
+    // This profile has three slots, so only the shared client limit can prevent dispatch.
+    fake_miner(addr, "gpu", None, &[("h2o", "cuda-40960-x3")], Behavior::Hang, tx).await;
+    wait_ready(addr, "h2o", 1).await;
+    let body =
+        json!({"model": "h2o", "state": "tokens:100", "questions": {"q": {"type": "noul", "instructions": "x"}}});
+    let mut pending = Vec::new();
+    for (index, authorization) in [None, Some("Bearer wrong")].into_iter().enumerate() {
+        let body = body.clone();
+        pending.push(tokio::spawn(async move {
+            let mut request = reqwest::Client::new().post(format!("http://{addr}/v1/systemone")).json(&body);
+            if let Some(value) = authorization {
+                request = request.header("authorization", value);
+            }
+            request.send().await.unwrap()
+        }));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let snapshot = scheduler.snapshot().await;
+                if snapshot.active_jobs == 1 && snapshot.queued_jobs == index {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("one active request and then one queued request");
+    }
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/systemone"))
+        .header("authorization", "another arbitrary value")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 429);
+    assert!(response.headers().contains_key("retry-after"));
+    assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "rate_limit_exceeded");
+    for task in pending {
+        task.abort();
+        let _ = task.await;
+    }
 }

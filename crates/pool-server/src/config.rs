@@ -9,7 +9,7 @@ use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 pub enum AuthMode {
     /// No credentials; only allowed on a loopback bind address.
     Local,
-    /// Client API keys, miner tokens and an optional admin token are required.
+    /// Miner tokens (unless open) and an optional admin token protect their routes.
     Keys,
 }
 
@@ -26,7 +26,6 @@ pub struct Config {
     pub bind: SocketAddr,
     pub catalog: PathBuf,
     pub auth_mode: AuthMode,
-    pub client_api_keys: Vec<String>,
     pub miner_tokens: Vec<String>,
     pub miner_auth: MinerAuth,
     /// Concurrent miner connections accepted.
@@ -43,9 +42,9 @@ pub struct Config {
     pub queue_capacity_global: Option<usize>,
     /// `None` = automatic: 4 x the slots of the miners serving the model (at least 16).
     pub queue_capacity_per_model: Option<usize>,
-    /// `None` = no per-client limit.
+    /// All inference requests share the public client label; `None` = no limit.
     pub max_active_per_client: Option<usize>,
-    /// `None` = no per-client limit.
+    /// All inference requests share the public client label; `None` = no limit.
     pub max_queued_per_client: Option<usize>,
     pub heartbeat: Duration,
     pub stream_buffer_events: usize,
@@ -67,7 +66,6 @@ impl Config {
             bind: parse("POOL_BIND", "127.0.0.1:8080")?,
             catalog: PathBuf::from(var("POOL_CATALOG").unwrap_or_else(|| "config/models.json".into())),
             auth_mode,
-            client_api_keys: list("POOL_CLIENT_API_KEYS"),
             miner_tokens: list("POOL_MINER_TOKENS"),
             miner_auth,
             max_miners: parse("POOL_MAX_MINERS", "256")?,
@@ -93,12 +91,9 @@ impl Config {
         match self.auth_mode {
             AuthMode::Local if !self.bind.ip().is_loopback() => Err(format!(
                 "POOL_AUTH_MODE=local only serves loopback, but POOL_BIND is {}; \
-                 set POOL_AUTH_MODE=keys with POOL_CLIENT_API_KEYS and POOL_MINER_TOKENS to serve other machines",
+                 set POOL_AUTH_MODE=keys with POOL_MINER_TOKENS or POOL_MINER_AUTH=open to serve other machines",
                 self.bind
             )),
-            AuthMode::Keys if self.client_api_keys.is_empty() => {
-                Err("POOL_AUTH_MODE=keys needs POOL_CLIENT_API_KEYS".into())
-            }
             AuthMode::Keys if self.miner_auth == MinerAuth::Token && self.miner_tokens.is_empty() => {
                 Err("POOL_AUTH_MODE=keys needs POOL_MINER_TOKENS, or POOL_MINER_AUTH=open to accept anonymous miners"
                     .into())

@@ -51,8 +51,7 @@ pub async fn readyz(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-pub async fn list_models(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>, ApiError> {
-    state.auth.client(&headers)?;
+pub async fn list_models(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let snapshot = state.scheduler.snapshot().await;
     let data: Vec<Value> = state
         .catalog
@@ -63,12 +62,7 @@ pub async fn list_models(State(state): State<AppState>, headers: HeaderMap) -> R
     Ok(Json(json!({ "object": "list", "data": data })))
 }
 
-pub async fn get_model(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    state.auth.client(&headers)?;
+pub async fn get_model(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
     let model = state.catalog.model(&id).ok_or_else(|| ApiError::model_not_found(&id))?;
     let snapshot = state.scheduler.snapshot().await;
     Ok(Json(model_entry(model, snapshot.models.get(&id).cloned().unwrap_or_default())))
@@ -126,19 +120,20 @@ pub async fn miner_catalog(
     Ok(Json(json!({ "catalog_revision": &**revision, "catalog": **catalog })))
 }
 
-pub async fn systemone(State(state): State<AppState>, headers: HeaderMap, body: Body) -> Response {
-    infer(state, headers, body, Operation::Systemone).await.unwrap_or_else(IntoResponse::into_response)
+pub async fn systemone(State(state): State<AppState>, body: Body) -> Response {
+    infer(state, body, Operation::Systemone).await.unwrap_or_else(IntoResponse::into_response)
 }
 
-pub async fn chat_completions(State(state): State<AppState>, headers: HeaderMap, body: Body) -> Response {
-    infer(state, headers, body, Operation::ChatCompletions).await.unwrap_or_else(IntoResponse::into_response)
+pub async fn chat_completions(State(state): State<AppState>, body: Body) -> Response {
+    infer(state, body, Operation::ChatCompletions).await.unwrap_or_else(IntoResponse::into_response)
 }
 
-async fn infer(state: AppState, headers: HeaderMap, body: Body, operation: Operation) -> Result<Response, ApiError> {
+async fn infer(state: AppState, body: Body, operation: Operation) -> Result<Response, ApiError> {
     let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
     let tag = |error: ApiError| error.with_request_id(&request_id);
 
-    let client = state.auth.client(&headers).map_err(tag)?;
+    // Every inference request shares admission limits and an operational label.
+    let client = "public".to_owned();
     // Refuse before reading, parsing or counting anything; the reservation is
     // released when this function returns or is dropped, or moves into the job guard.
     let reservation = state.scheduler.reserve(&client).map_err(tag)?;

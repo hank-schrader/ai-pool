@@ -26,7 +26,8 @@ services:
       - ./.env
     environment:
       POOL_BIND: 0.0.0.0:8080
-      # public deployment: clients need API keys, miners need tokens
+      # public deployment: clients need only the URL; miner/admin routes use tokens
+      # POOL_MINER_AUTH=open allows miners without tokens
       POOL_AUTH_MODE: keys
     networks:
       - proxy

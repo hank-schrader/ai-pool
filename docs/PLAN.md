@@ -561,8 +561,8 @@ All inference queues live at the pool. The miner has no hidden waiting inference
 | Runtime parallel slots | 1 |
 | Global queued requests | 64 |
 | Queued requests per model | 32 |
-| Active requests per client key | 2 |
-| Queued requests per client key | 8 |
+| Active requests for the shared public client | 2 |
+| Queued requests for the shared public client | 8 |
 | Token-count timeout | 10 seconds |
 | Queue wait | 15 seconds |
 | Dispatch acknowledgement | 5 seconds |
@@ -575,7 +575,7 @@ All inference queues live at the pool. The miner has no hidden waiting inference
 
 All phase timers fit within the original overall deadline. Retrying never resets it.
 
-Use fair admission across client keys. Preflight work also consumes bounded admission capacity so oversized or tokenization-heavy requests cannot bypass backpressure.
+Attribute all inference requests to the shared `public` client label for admission and logs; configured per-client limits apply to all callers together. Preflight work also consumes bounded admission capacity so oversized or tokenization-heavy requests cannot bypass backpressure.
 
 On child crash or OOM, withdraw that model’s readiness immediately. Recover it before accepting more jobs. Do not repeatedly route the failing workload to an unchanged unhealthy process.
 
@@ -950,12 +950,12 @@ Runtime archive hashes and minimum driver/OS requirements remain explicit **Phas
 
 **Security**
 
-- Static client API keys and separate per-miner tokens.
+- Public client access using only the pool URL; separate per-miner and admin tokens.
 - Token identity controls miner registration; a self-reported miner UUID is only a label.
 - Model access permissions, bounded rate limits, and concurrency limits.
 - HTTPS/WSS for remote operation.
 - Explicit local unauthenticated mode bound to loopback.
-- Production/proxy mode requires authentication; loopback reverse-proxy traffic does not imply trusted clients.
+- Production/proxy mode authenticates miners (unless explicitly open) and admin status; client inference is public.
 - Runtime HTTP remains private, preferably protected with a per-process key.
 - No arbitrary runtime routes, shell commands, URLs, local files, or launch arguments from clients.
 - Safe archive extraction and approved runtime manifests.
@@ -1091,7 +1091,7 @@ Recorded decisions:
 - **No rewards or accounting.**
 - **Clef and chat LLMs in the MVP**, including streaming `/v1/chat/completions`.
 - Multiple context profiles per model and accelerator; automatic largest-fitting selection with overrides.
-- Static client API keys; local unauthenticated loopback mode.
+- Clients need only the pool URL; local mode opens miner/admin routes on loopback.
 - No database or hot reload.
 - NVIDIA CUDA and Apple Silicon Metal.
 - Native quickstart first; Docker later.

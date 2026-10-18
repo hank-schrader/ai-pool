@@ -1,4 +1,4 @@
-//! Public status routes and the unchanged authentication boundaries.
+//! Public status and client routes, plus miner and admin authentication boundaries.
 
 use std::time::Duration;
 
@@ -24,7 +24,6 @@ fn config() -> Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         catalog: "config/models.json".into(),
         auth_mode: AuthMode::Local,
-        client_api_keys: vec![],
         miner_tokens: vec![],
         miner_auth: MinerAuth::Token,
         max_miners: 256,
@@ -144,7 +143,6 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
 async fn public_status_routes_need_no_auth_and_set_security_and_cache_headers() {
     let mut config = config();
     config.auth_mode = AuthMode::Keys;
-    config.client_api_keys = vec!["client-secret".into()];
     config.miner_tokens = vec!["miner-secret".into()];
     config.admin_token = Some("admin-secret".into());
     let app =
@@ -186,19 +184,76 @@ async fn public_status_routes_need_no_auth_and_set_security_and_cache_headers() 
         assert_eq!(stats["history"][field], serde_json::json!([]));
     }
 
-    for (method, path) in [
-        ("GET", "/v1/models"),
-        ("GET", "/v1/models/clef"),
-        ("POST", "/v1/systemone"),
-        ("POST", "/v1/chat/completions"),
-        ("GET", "/admin/v1/status"),
-        ("GET", "/miner/v1/catalog"),
-    ] {
+    for path in ["/admin/v1/status", "/miner/v1/catalog"] {
+        for authorization in [None, Some("Bearer wrong"), Some("arbitrary")] {
+            let mut request = Request::builder().uri(path);
+            if let Some(value) = authorization {
+                request = request.header("authorization", value);
+            }
+            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path} {authorization:?}");
+        }
+    }
+    for (path, token) in [("/admin/v1/status", "admin-secret"), ("/miner/v1/catalog", "miner-secret")] {
         let response = app
             .clone()
-            .oneshot(Request::builder().method(method).uri(path).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn all_client_routes_ignore_authorization_in_both_modes() {
+    for auth_mode in [AuthMode::Local, AuthMode::Keys] {
+        let mut config = config();
+        config.auth_mode = auth_mode;
+        config.miner_tokens = vec!["miner-secret".into()];
+        let app = router(AppState::new(
+            config,
+            Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap(),
+        ));
+        for authorization in [
+            None,
+            Some(axum::http::HeaderValue::from_static("Bearer wrong")),
+            Some(axum::http::HeaderValue::from_static("arbitrary")),
+            Some(axum::http::HeaderValue::from_bytes(&[0xff]).unwrap()),
+        ] {
+            for (method, path, body, status) in [
+                ("GET", "/v1/models", json!(null), StatusCode::OK),
+                ("GET", "/v1/models/clef", json!(null), StatusCode::OK),
+                (
+                    "POST",
+                    "/v1/systemone",
+                    json!({"model": "clef", "state": "short", "questions": {"q": {"type": "noul", "instructions": "x"}}}),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                (
+                    "POST",
+                    "/v1/chat/completions",
+                    json!({"model": "qwen2.5-1.5b-instruct", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 10}),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ),
+            ] {
+                let mut request = Request::builder().method(method).uri(path);
+                if let Some(value) = &authorization {
+                    request = request.header("authorization", value);
+                }
+                let response = app.clone().oneshot(request.body(Body::from(body.to_string())).unwrap()).await.unwrap();
+                assert_eq!(response.status(), status, "{auth_mode:?} {method} {path} {authorization:?}");
+                if status == StatusCode::SERVICE_UNAVAILABLE {
+                    let body: Value =
+                        serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+                    assert_eq!(body["error"]["code"], "no_miner_available");
+                }
+            }
+        }
     }
 }

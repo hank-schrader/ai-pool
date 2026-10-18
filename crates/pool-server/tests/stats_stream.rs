@@ -1,4 +1,6 @@
 //! Bounded statistics publication, reconnects, lag recovery and embedded assets.
+mod support;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -224,7 +226,6 @@ fn config() -> Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         catalog: "config/models.json".into(),
         auth_mode: AuthMode::Local,
-        client_api_keys: vec![],
         miner_tokens: vec![],
         miner_auth: MinerAuth::Token,
         max_miners: 256,
@@ -298,7 +299,7 @@ async fn loopback_disconnect_releases_the_response_body_permit() {
         config(),
         Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap(),
     ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = support::listener().await;
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let client = reqwest::Client::new();

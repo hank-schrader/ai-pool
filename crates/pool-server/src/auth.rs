@@ -1,4 +1,4 @@
-//! Bearer credentials. Keys are compared by SHA-256 digest so lookups do not
+//! Miner and admin bearer credentials. Tokens are compared by SHA-256 digest so lookups do not
 //! depend on how many leading characters of a guess are right.
 
 use std::collections::HashMap;
@@ -14,7 +14,6 @@ use crate::{
 pub struct Auth {
     mode: AuthMode,
     miner_auth: MinerAuth,
-    clients: HashMap<[u8; 32], String>,
     miners: HashMap<[u8; 32], String>,
     admin: Option<[u8; 32]>,
 }
@@ -27,7 +26,6 @@ impl Auth {
         Self {
             mode: config.auth_mode,
             miner_auth: config.miner_auth,
-            clients: labeled(&config.client_api_keys, "client"),
             miners: labeled(&config.miner_tokens, "miner"),
             admin: config.admin_token.as_deref().map(digest),
         }
@@ -35,16 +33,6 @@ impl Auth {
 
     pub fn mode(&self) -> AuthMode {
         self.mode
-    }
-
-    /// Returns the client label used for fairness and logs.
-    pub fn client(&self, headers: &HeaderMap) -> Result<String, ApiError> {
-        match self.mode {
-            AuthMode::Local => Ok("local".into()),
-            AuthMode::Keys => bearer(headers)
-                .and_then(|key| self.clients.get(&digest(key)).cloned())
-                .ok_or_else(ApiError::unauthorized),
-        }
     }
 
     pub fn miner(&self, headers: &HeaderMap) -> Result<String, ApiError> {

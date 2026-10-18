@@ -34,6 +34,10 @@ async fn main() -> ExitCode {
         info!(path = %path.display(), "loaded settings file");
     }
 
+    if std::env::var_os("POOL_CLIENT_API_KEYS").is_some() {
+        warn!("POOL_CLIENT_API_KEYS is no longer used and is ignored; clients need only the pool URL");
+    }
+
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(message) => {
