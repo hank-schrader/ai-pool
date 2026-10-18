@@ -491,10 +491,10 @@ mod tests {
     const ALL_MODELS: &str = include_str!("../../../tests/fixtures/all-models.json");
 
     #[test]
-    fn shipped_catalog_serves_only_h2o() {
+    fn shipped_catalog_serves_only_the_h2o_models() {
         let catalog = Catalog::parse(SHIPPED).expect("config/models.json is valid");
         let ids: Vec<_> = catalog.models.iter().map(|model| model.id.as_str()).collect();
-        assert_eq!(ids, ["h2o"]);
+        assert_eq!(ids, ["h2o", "h2o-q8"]);
         assert_eq!(catalog.default_models, ["h2o"]);
         let all = Catalog::parse(ALL_MODELS).expect("tests/fixtures/all-models.json is valid");
         assert_eq!(all.model("clef").unwrap().capability(), Capability::Systemone);

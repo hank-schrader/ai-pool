@@ -695,7 +695,7 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
 }
 
 #[tokio::test]
-async fn the_shipped_catalog_serves_only_h2o_and_turns_old_miners_away() {
+async fn the_shipped_catalog_serves_only_the_h2o_models_and_turns_old_miners_away() {
     let shipped = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
     let addr = start_with_state(AppState::new(config(), shipped)).await;
     for features in ["", "?features=offload"] {
@@ -711,7 +711,7 @@ async fn the_shipped_catalog_serves_only_h2o_and_turns_old_miners_away() {
         .await
         .unwrap();
     let ids: Vec<_> = current["catalog"]["models"].as_array().unwrap().iter().map(|model| &model["id"]).collect();
-    assert_eq!(ids, ["h2o"]);
+    assert_eq!(ids, ["h2o", "h2o-q8"]);
     assert_eq!(current["catalog"]["default_models"], json!(["h2o"]));
 }
 
