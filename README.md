@@ -59,7 +59,7 @@ pool-miner --version
 The binaries go to `~/.local/share/ai-pool/<version>` and are linked into
 `~/.local/bin`, which the installer adds to your shell's PATH. Pass
 `--version vX.Y.Z` to pin a release or `--no-modify-path` to leave your shell
-files alone (`curl … | sh -s -- --version v0.2.6`).
+files alone (`curl … | sh -s -- --version v0.2.7`).
 
 Windows (PowerShell):
 
@@ -70,7 +70,7 @@ pool-miner --version
 ```
 
 It installs into `%LOCALAPPDATA%\ai-pool\<version>` and adds it to your user
-PATH. Pin a release with `.\install.ps1 -Version v0.2.6`.
+PATH. Pin a release with `.\install.ps1 -Version v0.2.7`.
 
 ## 2. Check the machine
 
@@ -177,7 +177,7 @@ and this on-start script. It runs on every start, including after a stop/start:
 #!/bin/bash
 POOL=https://pool.example.com
 MODELS=h2o-q8
-VERSION=v0.2.6     # pool-miner release to install
+VERSION=v0.2.7     # pool-miner release to install
 
 # Some hosts leave ~/.ssh with ownership sshd rejects; fix it so key logins work.
 fix_ssh() { chown root:root /root /root/.ssh /root/.ssh/authorized_keys; chmod 755 /root; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; } 2>/dev/null
