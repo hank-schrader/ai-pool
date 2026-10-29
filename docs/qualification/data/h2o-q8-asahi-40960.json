@@ -1,0 +1,12 @@
+{
+  "exit_code": 1,
+  "wall_seconds": 137.04082858499987,
+  "profile": {
+    "id": "vulkan-40960-gpu0",
+    "accelerator": "vulkan",
+    "context_tokens": 40960,
+    "memory_mib": 7000,
+    "memory_source": "estimate",
+    "gpu_layers": 0
+  }
+}

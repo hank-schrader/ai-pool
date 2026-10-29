@@ -1,0 +1,354 @@
+[
+  {
+    "ctx": 4096,
+    "slots": 1,
+    "ngl": 0,
+    "baseline_available_mib": 11281,
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/cpu/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "-c",
+      "4098",
+      "--parallel",
+      "1",
+      "-b",
+      "512",
+      "-ub",
+      "512",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "36957",
+      "-v",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-t",
+      "6",
+      "-tb",
+      "6"
+    ],
+    "load_seconds": 6.783,
+    "small": {
+      "status": 200,
+      "seconds": 0.63,
+      "input_tokens": 81,
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 81,
+        "prompt_ms": 611.744,
+        "prompt_per_token_ms": 7.5523950617283955,
+        "prompt_per_second": 132.40832766647486,
+        "predicted_n": 1,
+        "predicted_ms": 0.001,
+        "predicted_per_token_ms": 0.0,
+        "predicted_per_second": 0.0
+      },
+      "truncated": false,
+      "tokens_evaluated": 81,
+      "probabilities": [
+        {
+          "id": 357,
+          "token": " A",
+          "bytes": [
+            32,
+            65
+          ],
+          "prob": 0.805644154548645,
+          "top_probs": [
+            {
+              "id": 357,
+              "token": " A",
+              "bytes": [
+                32,
+                65
+              ],
+              "prob": 0.805644154548645
+            },
+            {
+              "id": 417,
+              "token": " B",
+              "bytes": [
+                32,
+                66
+              ],
+              "prob": 0.19435586035251617
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    "full_context": [
+      {
+        "status": 200,
+        "seconds": 37.13,
+        "input_tokens": 4096,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 4096,
+          "prompt_ms": 37105.086,
+          "prompt_per_token_ms": 9.05885888671875,
+          "prompt_per_second": 110.38917953188411,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "truncated": false,
+        "tokens_evaluated": 4096,
+        "probabilities": [
+          {
+            "id": 417,
+            "token": " B",
+            "bytes": [
+              32,
+              66
+            ],
+            "prob": 0.4757632613182068,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.5242367386817932
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.4757632613182068
+              }
+            ]
+          }
+        ],
+        "error": null
+      }
+    ],
+    "over_limit": {
+      "status": 400,
+      "seconds": 0.009,
+      "input_tokens": 5120,
+      "timings": null,
+      "truncated": null,
+      "tokens_evaluated": null,
+      "probabilities": null,
+      "error": {
+        "code": 400,
+        "message": "request (5120 tokens) exceeds the available context size (4352 tokens), try increasing it",
+        "type": "exceed_context_size_error",
+        "n_prompt_tokens": 5120,
+        "n_ctx": 4352
+      }
+    },
+    "peaks": {
+      "rss_mib": 5308,
+      "system_memory_delta_mib": 5064,
+      "asahi_gem_mib": 0,
+      "conservative_unified_mib": 5308
+    },
+    "buffers_mib": {
+      "CPU model": 647.8,
+      "CPU_REPACK model": 4260.6,
+      "CPU other": 209.3
+    }
+  },
+  {
+    "ctx": 8192,
+    "slots": 1,
+    "ngl": 0,
+    "baseline_available_mib": 11514,
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/cpu/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "-c",
+      "8194",
+      "--parallel",
+      "1",
+      "-b",
+      "512",
+      "-ub",
+      "512",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "53151",
+      "-v",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-t",
+      "6",
+      "-tb",
+      "6"
+    ],
+    "load_seconds": 6.785,
+    "small": {
+      "status": 200,
+      "seconds": 0.621,
+      "input_tokens": 81,
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 81,
+        "prompt_ms": 601.484,
+        "prompt_per_token_ms": 7.4257283950617285,
+        "prompt_per_second": 134.6669238084471,
+        "predicted_n": 1,
+        "predicted_ms": 0.001,
+        "predicted_per_token_ms": 0.0,
+        "predicted_per_second": 0.0
+      },
+      "truncated": false,
+      "tokens_evaluated": 81,
+      "probabilities": [
+        {
+          "id": 357,
+          "token": " A",
+          "bytes": [
+            32,
+            65
+          ],
+          "prob": 0.805644154548645,
+          "top_probs": [
+            {
+              "id": 357,
+              "token": " A",
+              "bytes": [
+                32,
+                65
+              ],
+              "prob": 0.805644154548645
+            },
+            {
+              "id": 417,
+              "token": " B",
+              "bytes": [
+                32,
+                66
+              ],
+              "prob": 0.19435586035251617
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    "full_context": [
+      {
+        "status": 200,
+        "seconds": 91.174,
+        "input_tokens": 8192,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 8192,
+          "prompt_ms": 91149.821,
+          "prompt_per_token_ms": 11.126687133789062,
+          "prompt_per_second": 89.8740108332193,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "truncated": false,
+        "tokens_evaluated": 8192,
+        "probabilities": [
+          {
+            "id": 417,
+            "token": " B",
+            "bytes": [
+              32,
+              66
+            ],
+            "prob": 0.44384148716926575,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.5561585426330566
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.44384148716926575
+              }
+            ]
+          }
+        ],
+        "error": null
+      }
+    ],
+    "over_limit": {
+      "status": 400,
+      "seconds": 0.016,
+      "input_tokens": 9216,
+      "timings": null,
+      "truncated": null,
+      "tokens_evaluated": null,
+      "probabilities": null,
+      "error": {
+        "code": 400,
+        "message": "request (9216 tokens) exceeds the available context size (8448 tokens), try increasing it",
+        "type": "exceed_context_size_error",
+        "n_prompt_tokens": 9216,
+        "n_ctx": 8448
+      }
+    },
+    "peaks": {
+      "rss_mib": 5444,
+      "system_memory_delta_mib": 5669,
+      "asahi_gem_mib": 0,
+      "conservative_unified_mib": 5444
+    },
+    "buffers_mib": {
+      "CPU model": 647.8,
+      "CPU_REPACK model": 4260.6,
+      "CPU other": 341.3
+    }
+  }
+]

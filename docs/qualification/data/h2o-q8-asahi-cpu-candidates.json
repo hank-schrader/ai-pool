@@ -1,0 +1,1087 @@
+[
+  {
+    "config": "vk-nommap-t8-b2048",
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-c",
+      "4098",
+      "--parallel",
+      "1",
+      "-b",
+      "2048",
+      "-ub",
+      "2048",
+      "-t",
+      "8",
+      "-tb",
+      "8",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "38043",
+      "-v"
+    ],
+    "samples": [
+      {
+        "size": 800,
+        "latency_seconds": 6.321369340000274,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 800,
+          "prompt_ms": 6300.915,
+          "prompt_per_token_ms": 7.87614375,
+          "prompt_per_second": 126.96568672962579,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 800,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9180577993392944,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9180577993392944
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.044921256601810455
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03702091798186302
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 2048,
+        "latency_seconds": 16.960045731999344,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 2048,
+          "prompt_ms": 16938.909,
+          "prompt_per_token_ms": 8.27095166015625,
+          "prompt_per_second": 120.90507127702263,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 2048,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9137300252914429,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9137300252914429
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047264449298381805
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03900554031133652
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 4096,
+        "latency_seconds": 36.93489255299937,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 4096,
+          "prompt_ms": 36909.934,
+          "prompt_per_token_ms": 9.01121435546875,
+          "prompt_per_second": 110.97283457618754,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 4096,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9147998690605164,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9147998690605164
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047137826681137085
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03806228190660477
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "peaks": {
+      "rss_mib": 5667
+    },
+    "direct_disconnect_to_idle_seconds": 15.930822282000008
+  },
+  {
+    "config": "vk-nommap-t6-b2048",
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-c",
+      "4098",
+      "--parallel",
+      "1",
+      "-b",
+      "2048",
+      "-ub",
+      "2048",
+      "-t",
+      "6",
+      "-tb",
+      "6",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "45713",
+      "-v"
+    ],
+    "samples": [
+      {
+        "size": 800,
+        "latency_seconds": 5.948616849000246,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 800,
+          "prompt_ms": 5927.785,
+          "prompt_per_token_ms": 7.40973125,
+          "prompt_per_second": 134.95766125120937,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 800,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9180577993392944,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9180577993392944
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.044921256601810455
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03702091798186302
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 2048,
+        "latency_seconds": 17.17165760900025,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 2048,
+          "prompt_ms": 17149.11,
+          "prompt_per_token_ms": 8.3735888671875,
+          "prompt_per_second": 119.42310708835619,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 2048,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9137300252914429,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9137300252914429
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047264449298381805
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03900554031133652
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 4096,
+        "latency_seconds": 38.71454900200024,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 4096,
+          "prompt_ms": 38689.634,
+          "prompt_per_token_ms": 9.44571142578125,
+          "prompt_per_second": 105.86815062659937,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 4096,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9147998690605164,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9147998690605164
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047137826681137085
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03806228190660477
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "peaks": {
+      "rss_mib": 5667
+    },
+    "direct_disconnect_to_idle_seconds": 36.507428527999764
+  },
+  {
+    "config": "vk-nommap-t6-b512",
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-c",
+      "4098",
+      "--parallel",
+      "1",
+      "-b",
+      "512",
+      "-ub",
+      "512",
+      "-t",
+      "6",
+      "-tb",
+      "6",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "41665",
+      "-v"
+    ],
+    "samples": [
+      {
+        "size": 800,
+        "latency_seconds": 5.699917963000189,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 800,
+          "prompt_ms": 5678.507,
+          "prompt_per_token_ms": 7.09813375,
+          "prompt_per_second": 140.88210158057393,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 800,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9180577993392944,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9180577993392944
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.044921256601810455
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03702091798186302
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 2048,
+        "latency_seconds": 16.117158929000652,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 2048,
+          "prompt_ms": 16094.624,
+          "prompt_per_token_ms": 7.858703125,
+          "prompt_per_second": 127.24745853025209,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 2048,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9137300252914429,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9137300252914429
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047264449298381805
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03900554031133652
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 4096,
+        "latency_seconds": 37.06031823400008,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 4096,
+          "prompt_ms": 37036.119,
+          "prompt_per_token_ms": 9.042021240234375,
+          "prompt_per_second": 110.5947413118529,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 4096,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9147998690605164,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9147998690605164
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047137826681137085
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03806228190660477
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "peaks": {
+      "rss_mib": 5355
+    },
+    "direct_disconnect_to_idle_seconds": 2.65379199400013
+  },
+  {
+    "config": "cpu-nommap-t6-b512",
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/cpu/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-c",
+      "4098",
+      "--parallel",
+      "1",
+      "-b",
+      "512",
+      "-ub",
+      "512",
+      "-t",
+      "6",
+      "-tb",
+      "6",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "55959",
+      "-v"
+    ],
+    "samples": [
+      {
+        "size": 800,
+        "latency_seconds": 5.9663405869996495,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 800,
+          "prompt_ms": 5947.365,
+          "prompt_per_token_ms": 7.43420625,
+          "prompt_per_second": 134.51335171122,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 800,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9180577993392944,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9180577993392944
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.044921256601810455
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03702091798186302
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 2048,
+        "latency_seconds": 15.934360093000578,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 2048,
+          "prompt_ms": 15912.344,
+          "prompt_per_token_ms": 7.76969921875,
+          "prompt_per_second": 128.70511095034146,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 2048,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9137300252914429,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9137300252914429
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047264449298381805
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03900554031133652
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 4096,
+        "latency_seconds": 36.23423127099977,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 4096,
+          "prompt_ms": 36208.672,
+          "prompt_per_token_ms": 8.8400078125,
+          "prompt_per_second": 113.12207197215076,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 4096,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9147998690605164,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9147998690605164
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047137826681137085
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03806228190660477
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "peaks": {
+      "rss_mib": 5316
+    },
+    "direct_disconnect_to_idle_seconds": 34.6971413629999
+  },
+  {
+    "config": "cpu-nommap-t8-b512",
+    "command": [
+      "/home/dev/ai-pool-qualification/runtime/cpu/llama-b11374/llama-server",
+      "-m",
+      "/home/dev/ai-pool-qualification/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+      "-ngl",
+      "0",
+      "--device",
+      "none",
+      "--no-op-offload",
+      "--load-mode",
+      "none",
+      "-c",
+      "4098",
+      "--parallel",
+      "1",
+      "-b",
+      "512",
+      "-ub",
+      "512",
+      "-t",
+      "8",
+      "-tb",
+      "8",
+      "-fa",
+      "on",
+      "-ctk",
+      "f16",
+      "-ctv",
+      "f16",
+      "--no-context-shift",
+      "--cache-ram",
+      "0",
+      "--ctx-checkpoints",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "47749",
+      "-v"
+    ],
+    "samples": [
+      {
+        "size": 800,
+        "latency_seconds": 6.290407576000689,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 800,
+          "prompt_ms": 6268.777,
+          "prompt_per_token_ms": 7.83597125,
+          "prompt_per_second": 127.61659889959398,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 800,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9180577993392944,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9180577993392944
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.044921256601810455
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03702091798186302
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 2048,
+        "latency_seconds": 16.709813632000078,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 2048,
+          "prompt_ms": 16689.387,
+          "prompt_per_token_ms": 8.14911474609375,
+          "prompt_per_second": 122.7127155718781,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 2048,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9137300252914429,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9137300252914429
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047264449298381805
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03900554031133652
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "size": 4096,
+        "latency_seconds": 36.501008479999655,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 4096,
+          "prompt_ms": 36476.162,
+          "prompt_per_token_ms": 8.90531298828125,
+          "prompt_per_second": 112.29251586282571,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        },
+        "tokens_evaluated": 4096,
+        "probabilities": [
+          {
+            "id": 357,
+            "token": " A",
+            "bytes": [
+              32,
+              65
+            ],
+            "prob": 0.9147998690605164,
+            "top_probs": [
+              {
+                "id": 357,
+                "token": " A",
+                "bytes": [
+                  32,
+                  65
+                ],
+                "prob": 0.9147998690605164
+              },
+              {
+                "id": 417,
+                "token": " B",
+                "bytes": [
+                  32,
+                  66
+                ],
+                "prob": 0.047137826681137085
+              },
+              {
+                "id": 351,
+                "token": " C",
+                "bytes": [
+                  32,
+                  67
+                ],
+                "prob": 0.03806228190660477
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "peaks": {
+      "rss_mib": 5316
+    },
+    "direct_disconnect_to_idle_seconds": 2.8493521249993137
+  }
+]

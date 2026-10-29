@@ -1,5 +1,9 @@
 # H2O-Lightning-4B BF16 (refactor-tool) with weights in system RAM
 
+Historical BF16 measurements: the `h2o` model id has since been removed.
+The current model is `h2o-q8`; use the current README for commands and memory
+requirements. These measurements retain the weights and settings actually tested.
+
 Date: 2026-10-10. Question: how fast does refactor-tool's model answer a 40k-token question on a 4 GB laptop GPU?
 
 `scripts/qualify/h2o_refactor_tool_bench.py` reproduces `refactor-tool/crates/llm-connector` exactly:

@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-29T18:31:19.655825+00:00",
+  "uname": [
+    "Linux",
+    "macbook",
+    "7.2.12-402.asahi.fc44.aarch64+16k",
+    "#1 SMP PREEMPT_DYNAMIC Wed Oct 28 14:04:18 UTC 2026",
+    "aarch64"
+  ],
+  "load_average_before": [
+    5.55078125,
+    4.69873046875,
+    3.5732421875
+  ],
+  "threads": 6,
+  "method": "local pool/miner H2O systemone and llama-server prompt timers; llama-bench tg32 at matching depth",
+  "slots": 1,
+  "requests_per_size": 3,
+  "rows": [
+    {
+      "mode": "cpu-final",
+      "prompt_tokens": 800,
+      "context_limit": 8192,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 5.6583580110000185,
+      "prompt_tokens_per_second": 141.8284643818495,
+      "questions_per_second": 0.1764329352466967,
+      "wall_seconds": 17.003628011999353,
+      "samples": [
+        {
+          "seconds": 5.687036905999776,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9608557051439712,
+                "shipping": 0.022211506039541997,
+                "technical": 0.016932788816486622
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 5652.56,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 5.6583580110000185,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9620197281492796,
+                "shipping": 0.021577408073421428,
+                "technical": 0.0164028637772989
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 5635.6,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 5.658154677999846,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9618035831207996,
+                "shipping": 0.021885674837855147,
+                "technical": 0.01631074204134505
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 5633.69,
+          "computed_prompt_tokens": 800
+        }
+      ],
+      "generation_tokens_per_second": 17.668463,
+      "generation_stddev_tokens_per_second": 0.071358,
+      "generation_samples_ns": [
+        1819622160,
+        1806861507,
+        1806985341
+      ]
+    },
+    {
+      "mode": "cpu-final",
+      "prompt_tokens": 2048,
+      "context_limit": 8192,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 15.847270391000166,
+      "prompt_tokens_per_second": 128.95458632527283,
+      "questions_per_second": 0.06282019125734918,
+      "wall_seconds": 47.75534648900066,
+      "samples": [
+        {
+          "seconds": 16.06174633699993,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9575754517958132,
+                "shipping": 0.023745218061983504,
+                "technical": 0.018679330142203267
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 16003.75,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 15.847270391000166,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9583930643797542,
+                "shipping": 0.023586663332946355,
+                "technical": 0.01802027228729936
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 15820.57,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 15.846310510999501,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9580590297552224,
+                "shipping": 0.023601616666977875,
+                "technical": 0.01833935357779989
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 15820.36,
+          "computed_prompt_tokens": 2048
+        }
+      ],
+      "generation_tokens_per_second": 17.137892,
+      "generation_stddev_tokens_per_second": 0.056093,
+      "generation_samples_ns": [
+        1862750107,
+        1874198045,
+        1864714285
+      ]
+    },
+    {
+      "mode": "cpu-final",
+      "prompt_tokens": 4096,
+      "context_limit": 8192,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 36.10951281600046,
+      "prompt_tokens_per_second": 113.6846826543153,
+      "questions_per_second": 0.027683857433077785,
+      "wall_seconds": 108.36640115099999,
+      "samples": [
+        {
+          "seconds": 36.16306630999952,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9568120782237244,
+                "shipping": 0.024275139468794334,
+                "technical": 0.018912782307481207
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 36097.67,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 36.10951281600046,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.956808916977564,
+                "shipping": 0.02427367171302388,
+                "technical": 0.018917411309412113
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 36004.29,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 36.09377844099981,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9559841000250318,
+                "shipping": 0.02458013004172335,
+                "technical": 0.01943576993324475
+              }
+            }
+          },
+          "profile": "cpu-8192",
+          "prompt_ms": 35986.48,
+          "computed_prompt_tokens": 4096
+        }
+      ],
+      "generation_tokens_per_second": 15.899675,
+      "generation_stddev_tokens_per_second": 0.250291,
+      "generation_samples_ns": [
+        2049878686,
+        1994169668,
+        1994817672
+      ]
+    }
+  ]
+}

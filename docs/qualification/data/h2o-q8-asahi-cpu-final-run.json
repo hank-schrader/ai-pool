@@ -1,0 +1,28 @@
+{
+  "status": 200,
+  "seconds": 1.3433471839998674,
+  "profile": "cpu-8192",
+  "body": {
+    "answers": {
+      "blue": {
+        "noul": 0.9154887960691224
+      },
+      "route": {
+        "probabilities": {
+          "billing": 0.9507036276063138,
+          "shipping": 0.02469743119543953,
+          "technical": 0.024598941198246533
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 178
+    },
+    "model": "h2o-q8"
+  },
+  "allow_unqualified_runtime": false,
+  "models": [
+    "h2o-q8"
+  ],
+  "miner_exit_code": 0
+}

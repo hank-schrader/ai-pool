@@ -1,0 +1,11 @@
+{
+  "exit_code": 1,
+  "wall_seconds": 140.7889621889999,
+  "profile": {
+    "id": "cpu-40960",
+    "accelerator": "cpu",
+    "context_tokens": 40960,
+    "memory_mib": 7424,
+    "memory_source": "estimate"
+  }
+}

@@ -1,0 +1,13 @@
+[ok]   glibc: 2.43 (required >= 2.38)
+[ok]   system library: libgomp.so.1
+[ok]   system library: libssl.so.3
+[ok]   system library: libcrypto.so.3
+[ok]   accelerator: cpu Apple MacBook Pro (14-inch, M1 Pro, 2021) (15580 MiB total, 11701 MiB free); planning budget 9653 MiB (available RAM minus 2048 MiB; 6/8 CPU threads)
+[ok]   cache: /home/dev/.cache/ai-pool
+[ok]   catalog: 1 models, revision sha256:678505f149f1261ed4cf318a872c9c1deff7501fed3b6e2ddf8462b9b3f7e934
+[ok]   disk: /home/dev/.cache/ai-pool: 202.57 GB free, 0.00 GB needed (downloads + estimated extraction + reserve)
+[ok]   Linux loader: runtime and bundled libraries resolve; required symbol versions are available
+[ok]   runtime llama-b11374 aarch64-unknown-linux-gnu (qualified): version: 0.5.0-dev (build 11374, commit b92761a51)
+[--]   h2o-q8: cached
+[ok]   clef helper: /home/dev/.local/share/ai-pool/v0.2.7/ai-pool-v0.2.7-aarch64-unknown-linux-gnu/clef-token-count (clef-token-count llama.cpp:b92761a515ea31e852e7fbc1fad5f874b46f3718)
+[--]   runtime manifest: 1 for this build (aarch64-unknown-linux-gnu)

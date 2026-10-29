@@ -119,9 +119,9 @@ connected to https://pool.example.com (session ses_…)
 On a small GPU the plan says `automatic RAM fallback (-ngl 0)` instead, and the
 model serves prompts up to 8,192 tokens with its weights in system RAM.
 
-- ARM Linux and Windows: add `--allow-unqualified-runtime`, or answer `y`
-  when asked. ARM CPU qualification is pending; Windows has not been tested
-  on hardware.
+- Windows: add `--allow-unqualified-runtime`, or answer `y` when asked; it
+  has not been tested on hardware. The ARM Linux CPU runtime is qualified on
+  the Asahi test machine and does not need this flag.
 - `--yes` skips the download question (needed without a terminal).
 - `--context h2o-q8=8192` or `--profile h2o-q8=cuda-40960-x3` forces a profile;
   `--device 1` picks the second GPU. Run one miner per GPU.

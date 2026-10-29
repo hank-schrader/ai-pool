@@ -1,5 +1,9 @@
 # H2O llama-server flags on a 16 GB miner
 
+Historical BF16 measurements: the `h2o` model id has since been removed.
+The current model is `h2o-q8`; use the current README for commands and memory
+requirements. These measurements retain the weights and settings actually tested.
+
 Date: 2026-10-12. Question: do 2048-token prompt chunks (`-ub 2048`) and no RAM prompt cache (`--cache-ram 0`) let an h2o miner answer more questions than refactor-tool's `-ub 512 --cache-ram 1024`?
 
 - **Machine**: Vast.ai RTX A4000 16 GB, Core i7-14700, Ubuntu 24.04 container, profile `cuda-40960-x4` (4 slots, 8 jobs with prefetch). pool-miner and pool-server v0.2.1 on the same box, so only the llama-server flags change; they were appended through a `--llama-server` wrapper.
@@ -47,3 +51,30 @@ Local RTX 5070 Ti 16 GB with a Ryzen 9 9950X, runtime b11374, `cuda-40960-x4`. A
 - The cost: a request's later questions can no longer restore its record from a checkpoint (llama-server makes them 4 and 4 + 2,048 tokens before each prompt's end), so requests with several questions on a long record should lose most of the one-slot-per-request gain above (not measured). Turn checkpoints back on if clients start sending several questions per request.
 - Not worth changing, measured on the same card: `-b`/`-ub` from 512 to 4096 (within 3%), more slots (`x3` vs `x4`: 1%), `--kv-unified` (equal or slower). llama-server's probability readout computes a softmax over all 248,320 tokens and sorts them for every question (13 ms together on the 9950X). Requesting pre-sampling probabilities instead, which skips the full sort but ignores the label bias and so gives unusable answers, ran 4% faster; that is only an indication of what a llama.cpp change could gain.
 - On the live pool the two identical RTX PRO 4000s on one Vast host ran side by side, one with checkpoints and one without, for three 2-3 minute windows under the same traffic: the one without completed 19-28% more prompt tokens and kept its GPU 95-97% busy instead of 69-86%. Those windows were not always saturated, so the figure is indicative.
+
+## ARM Linux CPU defaults (h2o-q8, 2026-10-29)
+
+The CUDA measurements above do not establish suitable CPU batches. On the
+Asahi M1 Pro, a 2,048-token decode takes roughly 17–20 seconds, delaying runtime
+cancellation until the decode finishes. ARM CPU profiles use `-b 512 -ub 512`,
+`--device none --no-op-offload --load-mode none`, and the detected performance-core
+count for both `-t` and `-tb`. Uniform CPUs use all available cores. The other
+H2O flags above remain shared with CUDA.
+
+`--load-mode none` is b11374's spelling of no mmap. Repacked tensors replace
+their mapped copy instead of retaining both. At 4,096 tokens, switching from
+2,048- to 512-token batches reduced measured peak RSS from 5,667 to 5,355 MiB
+with the Vulkan archive's CPU backend; the CPU-only archive reached 5,316 MiB.
+Six CPU-only threads answered 800/2,048/4,096-token questions in
+5.97/15.93/36.23 seconds, compared with 6.29/16.71/36.50 seconds for eight threads.
+These are individual exploration runs, not statistical confidence bounds.
+
+The miner aborts its local HTTP future on a pool cancel or deadline, closing
+that runtime connection. A socket-level regression test checks this before any
+response headers arrive. llama-server checks disconnects in its response wait
+and applies the resulting cancel task between decode batches. Do not poll
+`/slots` while timing this: b11374's `recv_with_timeout` restarts its one-second
+wait on other task results, so frequent polling can suppress disconnect checks.
+`scripts/qualify/cancel_h2o.py` observes the log and checks `/slots` only after
+release. See [the Asahi report](linux-asahi.md) for the final qualification and
+fixed-size pool request measurements.

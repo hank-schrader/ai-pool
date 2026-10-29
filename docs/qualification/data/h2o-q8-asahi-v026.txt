@@ -1,0 +1,14 @@
+pool-miner 0.2.6
+Accelerator: cuda NVIDIA GeForce RTX 3050 Ti Laptop GPU (4096 MiB total, 3522 MiB free, driver 615.78.08); planning budget 3266 MiB (free memory minus 256 MiB); system RAM for offloading 16708 MiB (available minus 2048 MiB)
+
+h2o-q8 (default)
+  H2O-Lightning-4B Q8_0 decision model used by refactor-tool (Apache-2.0; quantized from the h2o BF16 GGUF sha256 74ac588b with llama-quantize from runtime llama-b11374, hosted on the pool host). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own (policy single). Use POST /v1/systemone.
+  Systemone, weights 4.48 GB (cached)
+    cuda-8192          context   8192    5120 MiB (Estimate)  fits with weights in RAM (estimate)
+    cuda-40960-x3      context  40960    9216 MiB (Estimate)  too large
+    cuda-40960-x4      context  40960   10240 MiB (Estimate)  too large
+    cuda-40960-x6      context  40960   13312 MiB (Estimate)  too large
+
+
+catalog_revision: sha256:a1a19bcffa10dde0394d3bb9302b5ed6b867fb068be10d912de143211f3185d5
+exit_code: 0

@@ -1,0 +1,715 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-29T17:49:41.334169+00:00",
+  "uname": [
+    "Linux",
+    "macbook",
+    "7.2.12-402.asahi.fc44.aarch64+16k",
+    "#1 SMP PREEMPT_DYNAMIC Wed Oct 28 14:04:18 UTC 2026",
+    "aarch64"
+  ],
+  "load_average_before": [
+    4.2783203125,
+    2.73974609375,
+    1.6103515625
+  ],
+  "threads": 8,
+  "method": "local pool/miner H2O systemone and llama-server prompt timers; llama-bench tg32 at matching depth",
+  "slots": 1,
+  "requests_per_size": 3,
+  "rows": [
+    {
+      "mode": "vulkan",
+      "prompt_tokens": 800,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 8.915087484000196,
+      "prompt_tokens_per_second": 90.29199301892407,
+      "questions_per_second": 0.11218996678375596,
+      "wall_seconds": 26.740359106999676,
+      "samples": [
+        {
+          "seconds": 8.898570990999815,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9622554339077362,
+                "shipping": 0.021536433936966554,
+                "technical": 0.0162081321552973
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 8854.58,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 8.915087484000196,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9633255691904488,
+                "shipping": 0.021146193079085995,
+                "technical": 0.015528237730465182
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 8861.5,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 8.926636715999848,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.961743722824144,
+                "shipping": 0.021967534908081458,
+                "technical": 0.0162887422677744
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 8864.35,
+          "computed_prompt_tokens": 800
+        }
+      ],
+      "generation_tokens_per_second": 12.397392,
+      "generation_stddev_tokens_per_second": 0.078523,
+      "generation_samples_ns": [
+        2600199407,
+        2571391853,
+        2572180648
+      ]
+    },
+    {
+      "mode": "vulkan",
+      "prompt_tokens": 2048,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 20.455118914000195,
+      "prompt_tokens_per_second": 100.48870483405625,
+      "questions_per_second": 0.048873504273039235,
+      "wall_seconds": 61.38295267800004,
+      "samples": [
+        {
+          "seconds": 20.444512957999905,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9581558820584264,
+                "shipping": 0.023740811866736565,
+                "technical": 0.01810330607483691
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 20373.34,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 20.455118914000195,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9574977900318506,
+                "shipping": 0.02429624291067747,
+                "technical": 0.01820596705747187
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 20381.51,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 20.4832654300003,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9584432856378208,
+                "shipping": 0.023577555097219843,
+                "technical": 0.017979159264959355
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 20386.35,
+          "computed_prompt_tokens": 2048
+        }
+      ],
+      "generation_tokens_per_second": 12.157811,
+      "generation_stddev_tokens_per_second": 0.042379,
+      "generation_samples_ns": [
+        2632961016,
+        2640768417,
+        2622492857
+      ]
+    },
+    {
+      "mode": "vulkan",
+      "prompt_tokens": 4096,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 42.6018728009999,
+      "prompt_tokens_per_second": 96.37893486531499,
+      "questions_per_second": 0.023471557678535062,
+      "wall_seconds": 127.81426955499956,
+      "samples": [
+        {
+          "seconds": 42.6018728009999,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.956911651468762,
+                "shipping": 0.024383473310592343,
+                "technical": 0.018704875220645685
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 42523.55,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 42.64811986699988,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9567726461385494,
+                "shipping": 0.024540887518737297,
+                "technical": 0.0186864663427134
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 42529.21,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 42.564224095999634,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.95545400192705,
+                "shipping": 0.025259264450023168,
+                "technical": 0.019286733622926988
+              }
+            }
+          },
+          "profile": "measure-vulkan-4096",
+          "prompt_ms": 42443.98,
+          "computed_prompt_tokens": 4096
+        }
+      ],
+      "generation_tokens_per_second": 11.574726,
+      "generation_stddev_tokens_per_second": 0.176012,
+      "generation_samples_ns": [
+        2722155770,
+        2766963627,
+        2806090590
+      ]
+    },
+    {
+      "mode": "cpu",
+      "prompt_tokens": 800,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 6.266761251000389,
+      "prompt_tokens_per_second": 128.30780186281544,
+      "questions_per_second": 0.1596324369063495,
+      "wall_seconds": 18.793172980000236,
+      "samples": [
+        {
+          "seconds": 6.2943252559998655,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9608557051439712,
+                "shipping": 0.022211506039541997,
+                "technical": 0.016932788816486622
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 6250.18,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 6.266761251000389,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9620197281492796,
+                "shipping": 0.021577408073421428,
+                "technical": 0.0164028637772989
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 6244.26,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 6.23206318099983,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9618035831207996,
+                "shipping": 0.021885674837855147,
+                "technical": 0.01631074204134505
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 6210.58,
+          "computed_prompt_tokens": 800
+        }
+      ],
+      "generation_tokens_per_second": 7.932329,
+      "generation_stddev_tokens_per_second": 0.147114,
+      "generation_samples_ns": [
+        4077584970,
+        3949544420,
+        4077990096
+      ]
+    },
+    {
+      "mode": "cpu",
+      "prompt_tokens": 2048,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 16.93602067500069,
+      "prompt_tokens_per_second": 121.13313900244572,
+      "questions_per_second": 0.05900918595578832,
+      "wall_seconds": 50.839542206999795,
+      "samples": [
+        {
+          "seconds": 16.979810007000196,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9575754517958132,
+                "shipping": 0.023745218061983504,
+                "technical": 0.018679330142203267
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 16913.23,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 16.923694441000407,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9583930643797542,
+                "shipping": 0.023586663332946355,
+                "technical": 0.01802027228729936
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 16897.38,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 16.93602067500069,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9580590297552224,
+                "shipping": 0.023601616666977875,
+                "technical": 0.01833935357779989
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 16910.44,
+          "computed_prompt_tokens": 2048
+        }
+      ],
+      "generation_tokens_per_second": 7.495963,
+      "generation_stddev_tokens_per_second": 0.346235,
+      "generation_samples_ns": [
+        4098184663,
+        4492058135,
+        4235117449
+      ]
+    },
+    {
+      "mode": "cpu",
+      "prompt_tokens": 4096,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 37.51215374499952,
+      "prompt_tokens_per_second": 109.74380875855263,
+      "questions_per_second": 0.0267597762510617,
+      "wall_seconds": 112.1085606939996,
+      "samples": [
+        {
+          "seconds": 37.06311695800014,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9568120782237244,
+                "shipping": 0.024275139468794334,
+                "technical": 0.018912782307481207
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 36990.56,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 37.53325924100045,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.956808916977564,
+                "shipping": 0.02427367171302388,
+                "technical": 0.018917411309412113
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 37499.66,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 37.51215374499952,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9559841000250318,
+                "shipping": 0.02458013004172335,
+                "technical": 0.01943576993324475
+              }
+            }
+          },
+          "profile": "measure-cpu-4096",
+          "prompt_ms": 37479.65,
+          "computed_prompt_tokens": 4096
+        }
+      ],
+      "generation_tokens_per_second": 6.773727,
+      "generation_stddev_tokens_per_second": 0.181775,
+      "generation_samples_ns": [
+        4853687771,
+        4600041662,
+        4725482006
+      ]
+    },
+    {
+      "mode": "ram-vulkan",
+      "prompt_tokens": 800,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 8.807799335000709,
+      "prompt_tokens_per_second": 91.03699098468265,
+      "questions_per_second": 0.11342088587264838,
+      "wall_seconds": 26.45015489800062,
+      "samples": [
+        {
+          "seconds": 8.842938926999523,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9626220144310634,
+                "shipping": 0.02135521261966393,
+                "technical": 0.01602277294927275
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 8807.23,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 8.799382969999897,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9633640316974766,
+                "shipping": 0.021089034907246743,
+                "technical": 0.015546933395276748
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 8770.42,
+          "computed_prompt_tokens": 800
+        },
+        {
+          "seconds": 8.807799335000709,
+          "state_tokens": 715,
+          "usage": {
+            "input_tokens": 800
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9621092619617028,
+                "shipping": 0.0219310786920575,
+                "technical": 0.01595965934623971
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 8785.26,
+          "computed_prompt_tokens": 800
+        }
+      ],
+      "generation_tokens_per_second": 6.63027,
+      "generation_stddev_tokens_per_second": 0.168774,
+      "generation_samples_ns": [
+        4956798236,
+        4817571863,
+        4710954726
+      ]
+    },
+    {
+      "mode": "ram-vulkan",
+      "prompt_tokens": 2048,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 19.679444462999527,
+      "prompt_tokens_per_second": 104.38564106188605,
+      "questions_per_second": 0.05087137981415164,
+      "wall_seconds": 58.9722553419997,
+      "samples": [
+        {
+          "seconds": 19.683477182999923,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9574539942040208,
+                "shipping": 0.023977026926691417,
+                "technical": 0.018568978869287656
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 19621.92,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 19.679444462999527,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.957581518664215,
+                "shipping": 0.024111852341010327,
+                "technical": 0.01830662899477477
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 19653.12,
+          "computed_prompt_tokens": 2048
+        },
+        {
+          "seconds": 19.609296280000308,
+          "state_tokens": 1963,
+          "usage": {
+            "input_tokens": 2048
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9582977622679631,
+                "shipping": 0.02382189717619438,
+                "technical": 0.017880340555842304
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 19583.63,
+          "computed_prompt_tokens": 2048
+        }
+      ],
+      "generation_tokens_per_second": 6.949271,
+      "generation_stddev_tokens_per_second": 0.241199,
+      "generation_samples_ns": [
+        4427363096,
+        4699936786,
+        4697984573
+      ]
+    },
+    {
+      "mode": "ram-vulkan",
+      "prompt_tokens": 4096,
+      "context_limit": 4096,
+      "parallel_slots": 1,
+      "requests": 3,
+      "median_latency_seconds": 40.64927546600029,
+      "prompt_tokens_per_second": 100.78849278879989,
+      "questions_per_second": 0.024576598678934906,
+      "wall_seconds": 122.0673389020003,
+      "samples": [
+        {
+          "seconds": 40.88005318099931,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9572413900685186,
+                "shipping": 0.024257559169575865,
+                "technical": 0.01850105076190554
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 40796.79,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 40.53798413000004,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.9568152393491756,
+                "shipping": 0.024636485446265677,
+                "technical": 0.018548275204558595
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 40505.43,
+          "computed_prompt_tokens": 4096
+        },
+        {
+          "seconds": 40.64927546600029,
+          "state_tokens": 4011,
+          "usage": {
+            "input_tokens": 4096
+          },
+          "answer": {
+            "route": {
+              "probabilities": {
+                "billing": 0.955272395539302,
+                "shipping": 0.02552784486446687,
+                "technical": 0.019199759596230985
+              }
+            }
+          },
+          "profile": "measure-ram-vulkan-4096",
+          "prompt_ms": 40616.46,
+          "computed_prompt_tokens": 4096
+        }
+      ],
+      "generation_tokens_per_second": 6.496298,
+      "generation_stddev_tokens_per_second": 0.345549,
+      "generation_samples_ns": [
+        4712859188,
+        4860680327,
+        5232589348
+      ]
+    }
+  ]
+}

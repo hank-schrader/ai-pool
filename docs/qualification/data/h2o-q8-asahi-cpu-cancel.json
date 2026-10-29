@@ -1,0 +1,18 @@
+[
+  {
+    "batch": 2048,
+    "threads": 6,
+    "prompt_tokens": 6001,
+    "cancel_posted_seconds": 0.9845866240002579,
+    "slot_released_seconds": 16.54578786499951,
+    "runtime_excerpt": "0.08.846.183 W srv          stop: cancel task, id_task = 0\n0.24.389.853 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2048, truncated = 0"
+  },
+  {
+    "batch": 512,
+    "threads": 6,
+    "prompt_tokens": 6001,
+    "cancel_posted_seconds": 0.9883393520003665,
+    "slot_released_seconds": 2.699417390000235,
+    "runtime_excerpt": "0.09.045.823 W srv          stop: cancel task, id_task = 0\n0.10.763.092 I slot      release: id  0 | task 0 | stop processing: n_tokens = 512, truncated = 0"
+  }
+]

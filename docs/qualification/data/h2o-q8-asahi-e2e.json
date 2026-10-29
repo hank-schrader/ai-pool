@@ -1,0 +1,70 @@
+[
+  {
+    "check": "registered",
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "h2o-q8",
+          "object": "model",
+          "created": 0,
+          "owned_by": "ai-pool",
+          "pool": {
+            "description": "H2O-Lightning-4B Q8_0 decision model used by refactor-tool (Apache-2.0; quantized from the h2o BF16 GGUF sha256 74ac588b with llama-quantize from runtime llama-b11374, hosted on the pool host). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own (policy single). Use POST /v1/systemone.",
+            "capabilities": [
+              "systemone"
+            ],
+            "streaming": false,
+            "catalog_max_context_tokens": 40960,
+            "max_available_context_tokens": 8192,
+            "max_idle_context_tokens": 8192,
+            "ready_miners": 1,
+            "free_slots": 1,
+            "queued_requests": 0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "check": "sane_answers",
+    "status": 200,
+    "seconds": 3.592,
+    "profile": "vulkan-8192-gpu0",
+    "body": {
+      "answers": {
+        "blue": {
+          "noul": 0.9190808779105514
+        },
+        "route": {
+          "probabilities": {
+            "billing": 0.9524309261476444,
+            "shipping": 0.023688703366217513,
+            "technical": 0.023880370486137968
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 178
+      },
+      "model": "h2o-q8"
+    }
+  },
+  {
+    "check": "deadline_cancellation_failed"
+  },
+  {
+    "check": "runtime_crash_withdraws_capacity"
+  },
+  {
+    "check": "runtime_crash_recovery",
+    "new_pid": 20234
+  },
+  {
+    "check": "pool_restart_reconnects"
+  },
+  {
+    "check": "ctrl_c_drains_and_reaps",
+    "exit_code": 0
+  }
+]

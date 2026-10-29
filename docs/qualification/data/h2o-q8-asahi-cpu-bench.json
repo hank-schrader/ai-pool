@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "catalog_revision": "sha256:678505f149f1261ed4cf318a872c9c1deff7501fed3b6e2ddf8462b9b3f7e934",
+  "hardware": {
+    "os": "linux",
+    "arch": "aarch64",
+    "accelerator": "cpu",
+    "devices": [
+      {
+        "id": "cpu0",
+        "name": "Apple MacBook Pro (14-inch, M1 Pro, 2021)",
+        "memory_total_mib": 15580
+      }
+    ]
+  },
+  "cpu": "Icestorm-M1-Pro",
+  "accelerator_budget_mib": 9720,
+  "ram_budget_mib": 0,
+  "runtime_commits": {
+    "llama-b11374": "b92761a515ea31e852e7fbc1fad5f874b46f3718"
+  },
+  "workload_version": 2,
+  "seed": 20261012,
+  "admission_seconds": 30,
+  "request_timeout_seconds": 150,
+  "memory_sample_interval_ms": 500,
+  "memory_scope": "sampled runtime PID peaks from readiness through warm-up and drain; benchmark RSS separate",
+  "profiles": [
+    {
+      "model": "h2o-q8",
+      "profile": "cpu-8192",
+      "placement": "cpu",
+      "planned_accelerator_mib": 6144,
+      "planned_ram_mib": 0,
+      "memory_source": "measured",
+      "gpu_layers": 0,
+      "context_tokens": 8192,
+      "slots": 1,
+      "jobs": 1,
+      "status": "ok",
+      "error": null,
+      "warnings": [
+        "small sample: 2 completed requests (<10)"
+      ],
+      "metrics": {
+        "submitted": 2,
+        "completed": 2,
+        "errors": 0,
+        "timed_out": 0,
+        "cancelled": 0,
+        "questions": 9,
+        "prompt_tokens": 16924,
+        "generated_tokens": 0,
+        "missing_prompt_usage": 0,
+        "missing_generated_usage": 0,
+        "elapsed_seconds": 158.65172349,
+        "requests_per_second": 0.012606229267506586,
+        "questions_per_second": 0.05672803170377964,
+        "prompt_tokens_per_second": 106.67391206164072,
+        "generated_tokens_per_second": null,
+        "p50_seconds": 29.497321653,
+        "p95_seconds": 129.154365003,
+        "error_counts": {}
+      },
+      "peaks": {
+        "runtime_vram_mib": null,
+        "runtime_rss_mib": 5447,
+        "benchmark_rss_mib": 15,
+        "unavailable": {
+          "runtime_vram_mib": "dedicated VRAM or runtime PID unavailable"
+        }
+      }
+    }
+  ]
+}

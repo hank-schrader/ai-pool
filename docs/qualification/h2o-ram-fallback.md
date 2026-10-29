@@ -1,5 +1,9 @@
 # H2O automatic RAM fallback on a 4 GB laptop GPU
 
+Historical BF16 measurements: the `h2o` model id has since been removed.
+The current model is `h2o-q8`; use the current README for commands and memory
+requirements. These measurements retain the weights and settings actually tested.
+
 Date: 2026-10-14. Question: does a miner with a 4 GB GPU serve `h2o` when none of its published profiles fits, using the automatic RAM fallback?
 
 - **Machine**: kachigar, RTX 3050 Ti Laptop 4 GB (2.66 GB free with the desktop running), Ryzen 7 6800H, 30 GB RAM, CachyOS, driver 615.71.09.

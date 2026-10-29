@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "catalog_revision": "sha256:deac9a9e64bb5253b21b270557bd48c24174a55c0f21c793c3cc0bede1c0f61b",
+  "hardware": {
+    "os": "linux",
+    "arch": "aarch64",
+    "accelerator": "vulkan",
+    "devices": [
+      {
+        "id": "gpu0",
+        "name": "Apple M1 Pro (G13S C0)",
+        "memory_total_mib": 7790
+      }
+    ]
+  },
+  "cpu": "Icestorm-M1-Pro",
+  "accelerator_budget_mib": 7534,
+  "ram_budget_mib": 0,
+  "runtime_commits": {
+    "llama-b11374": "b92761a515ea31e852e7fbc1fad5f874b46f3718"
+  },
+  "workload_version": 2,
+  "seed": 20261012,
+  "admission_seconds": 30,
+  "request_timeout_seconds": 150,
+  "memory_sample_interval_ms": 500,
+  "memory_scope": "sampled runtime PID peaks from readiness through warm-up and drain; benchmark RSS separate",
+  "profiles": [
+    {
+      "model": "h2o-q8",
+      "profile": "vulkan-8192-gpu0",
+      "placement": "offload",
+      "planned_accelerator_mib": 6144,
+      "planned_ram_mib": 0,
+      "memory_source": "measured",
+      "gpu_layers": 0,
+      "context_tokens": 8192,
+      "slots": 1,
+      "jobs": 1,
+      "status": "ok",
+      "error": null,
+      "warnings": [
+        "small sample: 1 completed requests (<10)"
+      ],
+      "metrics": {
+        "submitted": 1,
+        "completed": 1,
+        "errors": 0,
+        "timed_out": 0,
+        "cancelled": 0,
+        "questions": 7,
+        "prompt_tokens": 4116,
+        "generated_tokens": 0,
+        "missing_prompt_usage": 0,
+        "missing_generated_usage": 0,
+        "elapsed_seconds": 45.825830086,
+        "requests_per_second": 0.021821754196777867,
+        "questions_per_second": 0.15275227937744507,
+        "prompt_tokens_per_second": 89.8183402739377,
+        "generated_tokens_per_second": null,
+        "p50_seconds": 45.825789003,
+        "p95_seconds": 45.825789003,
+        "error_counts": {}
+      },
+      "peaks": {
+        "runtime_vram_mib": null,
+        "runtime_rss_mib": 700,
+        "benchmark_rss_mib": 49,
+        "unavailable": {
+          "runtime_vram_mib": "dedicated VRAM or runtime PID unavailable"
+        }
+      }
+    }
+  ]
+}

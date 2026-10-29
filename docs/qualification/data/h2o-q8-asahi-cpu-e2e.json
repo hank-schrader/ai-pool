@@ -1,0 +1,105 @@
+[
+  {
+    "check": "registered",
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "h2o-q8",
+          "object": "model",
+          "created": 0,
+          "owned_by": "ai-pool",
+          "pool": {
+            "description": "H2O-Lightning-4B Q8_0 decision model used by refactor-tool (Apache-2.0; quantized from the h2o BF16 GGUF sha256 74ac588b with llama-quantize from runtime llama-b11374, hosted on the pool host). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own (policy single). Use POST /v1/systemone.",
+            "capabilities": [
+              "systemone"
+            ],
+            "streaming": false,
+            "catalog_max_context_tokens": 40960,
+            "max_available_context_tokens": 8192,
+            "max_idle_context_tokens": 8192,
+            "ready_miners": 1,
+            "free_slots": 1,
+            "queued_requests": 0
+          }
+        }
+      ]
+    },
+    "flags": {
+      "-ngl": "0",
+      "-b": "512",
+      "-ub": "512",
+      "-t": "6",
+      "-tb": "6",
+      "--load-mode": "none",
+      "--device": "none",
+      "--parallel": "1"
+    }
+  },
+  {
+    "check": "sane_answers",
+    "seconds": 1.4355064500005028,
+    "status": 200,
+    "profile": "cpu-8192",
+    "body": {
+      "answers": {
+        "blue": {
+          "noul": 0.9154887960691224
+        },
+        "route": {
+          "probabilities": {
+            "billing": 0.9507036276063138,
+            "shipping": 0.02469743119543953,
+            "technical": 0.024598941198246533
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 178
+      },
+      "model": "h2o-q8"
+    }
+  },
+  {
+    "check": "client_disconnect",
+    "cancel_posted_seconds": 1.0069531600001937,
+    "slot_released_seconds": 2.7157267060001686,
+    "runtime_excerpt": "2026-10-29T18:29:26.312841Z  WARN llama_server: h2o-q8: 1.22.049.116 W srv          stop: cancel task, id_task = 19\n2026-10-29T18:29:28.012880Z DEBUG llama_server: h2o-q8: 1.23.749.166 I slot      release: id  0 | task 19 | stop processing: n_tokens = 512, truncated = 0"
+  },
+  {
+    "check": "deadline_response",
+    "seconds": 20.01215924400003,
+    "status": 504,
+    "body": {
+      "error": {
+        "message": "no result within 19999 ms",
+        "type": "server_error",
+        "param": null,
+        "code": "inference_timeout",
+        "request_id": "req_9f9bdd1554f84684b9028de6beeb5b17",
+        "retryable": true
+      }
+    }
+  },
+  {
+    "check": "deadline_cancellation",
+    "cancel_posted_seconds": 0.050286612000491004,
+    "slot_released_seconds": 1.2080473989999518,
+    "runtime_excerpt": "2026-10-29T18:29:49.475654Z  WARN llama_server: h2o-q8: 1.45.211.535 W srv          stop: cancel task, id_task = 27\n2026-10-29T18:29:50.627773Z DEBUG llama_server: h2o-q8: 1.46.364.014 I slot      release: id  0 | task 27 | stop processing: n_tokens = 2560, truncated = 0"
+  },
+  {
+    "check": "runtime_crash_withdraws_capacity"
+  },
+  {
+    "check": "runtime_crash_recovery",
+    "seconds": 83.07599328000015
+  },
+  {
+    "check": "pool_restart_reconnects",
+    "seconds": 2.4061285339994356
+  },
+  {
+    "check": "ctrl_c_drains_and_reaps",
+    "exit_code": 0
+  }
+]
