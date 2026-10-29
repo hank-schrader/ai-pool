@@ -227,6 +227,35 @@ impl ChatStream {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn cancelling_a_pending_completion_closes_its_connection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = LocalClient::new(format!("http://{}", listener.local_addr().unwrap()), "test".into());
+        let request_client = client.clone();
+        let request = tokio::spawn(async move { request_client.post_bytes("/completion", b"{}".to_vec()).await });
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        while !bytes.ends_with(b"\r\n\r\n") {
+            bytes.push(socket.read_u8().await.unwrap());
+        }
+        let mut body = [0; 2];
+        socket.read_exact(&mut body).await.unwrap();
+        assert_eq!(&body, b"{}");
+        // llama-server sends no headers until its non-streaming completion ends.
+        // Keep the client and its connection pool alive while cancelling the job.
+        request.abort();
+        let _ = request.await;
+        let error = tokio::time::timeout(Duration::from_secs(2), socket.read_u8())
+            .await
+            .expect("cancelled completion closes the socket")
+            .unwrap_err();
+        assert!(matches!(error.kind(), std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset));
+        let _ = socket.shutdown().await;
+        drop(client);
+    }
+
     #[test]
     fn maps_context_errors() {
         let clef = r#"{"error":{"code":500,"message":"input (4475 tokens) is too large to process. increase the physical batch size (current batch size: 4096)"}}"#;

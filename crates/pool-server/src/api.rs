@@ -97,7 +97,7 @@ pub async fn admin_status(State(state): State<AppState>, headers: HeaderMap) -> 
 
 /// Miners reject unknown catalog fields, so offload profiles are only sent to
 /// miners that ask for them with `?features=offload`, and h2o models only with
-/// `?features=offload,h2o`.
+/// `?features=offload,h2o`. CPU profiles additionally require `cpu`.
 pub async fn miner_catalog(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
@@ -105,10 +105,11 @@ pub async fn miner_catalog(
 ) -> Result<Json<Value>, ApiError> {
     state.auth.miner(&headers)?;
     let wants = |feature: &str| query.get("features").is_some_and(|f| f.split(',').any(|f| f == feature));
-    let (catalog, revision) = match (wants("offload"), wants("h2o")) {
-        (_, true) => (&state.catalog, &state.catalog_revision),
-        (true, false) => (&state.offload_catalog, &state.offload_catalog_revision),
-        (false, false) => (&state.legacy_catalog, &state.legacy_catalog_revision),
+    let (catalog, revision) = match (wants("offload"), wants("h2o"), wants("cpu")) {
+        (_, true, true) => (&state.catalog, &state.catalog_revision),
+        (_, true, false) => (&state.h2o_catalog, &state.h2o_catalog_revision),
+        (true, false, _) => (&state.offload_catalog, &state.offload_catalog_revision),
+        (false, false, _) => (&state.legacy_catalog, &state.legacy_catalog_revision),
     };
     if catalog.models.is_empty() {
         return Err(ApiError::new(

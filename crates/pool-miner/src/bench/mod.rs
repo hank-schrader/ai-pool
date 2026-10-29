@@ -52,6 +52,7 @@ impl Row {
             profile: choice.profile.id.clone(),
             placement: match choice.placement {
                 Placement::Ram { .. } => "ram_fallback",
+                Placement::Published if choice.profile.accelerator == Accelerator::Cpu => "cpu",
                 Placement::Published if choice.profile.offloaded() => "offload",
                 _ => "gpu",
             },
@@ -268,7 +269,7 @@ async fn profile(
     let sample_interrupt = interrupted.clone();
     let sample_hosted = hosted.clone();
     let sample_ready = ready.clone();
-    let device = machine.gpu().index;
+    let device = machine.device().index;
     let cuda = machine.accelerator == Accelerator::Cuda;
     let sampler = tokio::spawn(async move {
         let uuid = if cuda {
@@ -482,6 +483,7 @@ fn table(rows: &[Row]) -> String {
             "ram_fallback" => "RAM",
             "offload" => "off",
             "gpu" => "GPU",
+            "cpu" => "CPU",
             _ => "—",
         };
         let profile: String = row.profile.chars().take(18).collect();
@@ -531,7 +533,7 @@ mod tests {
             "42",
             "--json",
             "--models",
-            "clef,h2o,qwen2.5-1.5b-instruct",
+            "clef,h2o-q8,qwen2.5-1.5b-instruct",
             "--catalog",
             path.to_str().unwrap(),
             "--pool",
@@ -542,7 +544,7 @@ mod tests {
         .unwrap();
         assert_eq!(cli.models.len(), 3);
         assert!(matches!(cli.command, Some(crate::Command::Bench { duration: 60, seed: 42, json: true })));
-        assert!(cli.load_catalog(false).await.unwrap().0.model("h2o").is_some());
+        assert!(cli.load_catalog(false).await.unwrap().0.model("h2o-q8").is_some());
         assert!(Cli::try_parse_from(["pool-miner", "bench", "--duration", "0"]).is_err());
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -558,7 +560,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn fake_inference_sample_excludes_warmup_and_includes_drain() {
         let catalog = Catalog::parse(include_str!("../../../../tests/fixtures/all-models.json")).unwrap();
-        let model = catalog.model("h2o").unwrap();
+        let model = catalog.model("h2o-q8").unwrap();
         let choices = plan::benchmark_choices(model, Accelerator::Cuda, 2304, 19000, None).unwrap();
         let mut row = Row::new(&choices[0], None);
         let (_sender, mut records) = records().await;

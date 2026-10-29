@@ -147,6 +147,7 @@ impl Default for Execution {
 pub enum Accelerator {
     Cuda,
     Metal,
+    Cpu,
 }
 
 impl fmt::Display for Accelerator {
@@ -154,6 +155,7 @@ impl fmt::Display for Accelerator {
         f.write_str(match self {
             Accelerator::Cuda => "cuda",
             Accelerator::Metal => "metal",
+            Accelerator::Cpu => "cpu",
         })
     }
 }
@@ -174,11 +176,12 @@ pub struct Profile {
     pub accelerator: Accelerator,
     pub context_tokens: u32,
     /// Accelerator memory one resident process needs at this context:
-    /// dedicated VRAM for CUDA, unified memory for Metal.
+    /// dedicated VRAM for CUDA, unified memory for Metal, system RAM for CPU.
     pub memory_mib: u64,
     pub memory_source: MemorySource,
     /// Offload profiles only: layers kept on the GPU; the rest of the weights
-    /// stay in system RAM. Unset means every layer is on the GPU.
+    /// stay in system RAM. Unset means every layer is on the accelerator;
+    /// CPU profiles always keep all weights in system RAM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_layers: Option<u32>,
     /// Offload profiles only: system RAM the weights left on the host need.
@@ -448,17 +451,15 @@ impl Model {
             match (profile.gpu_layers, profile.host_memory_mib) {
                 (None, None) => {}
                 (Some(_), Some(host)) if host > 0 && profile.accelerator == Accelerator::Cuda => {}
-                (Some(_), Some(_)) if profile.accelerator != Accelerator::Cuda => problems.push(format!(
-                    "{at}: profile {:?}: offloading to system RAM is only supported on cuda",
-                    profile.id
-                )),
+                (Some(_), Some(_)) if profile.accelerator != Accelerator::Cuda => problems
+                    .push(format!("{at}: profile {:?}: separate host memory is only supported on cuda", profile.id)),
                 _ => problems.push(format!(
                     "{at}: profile {:?}: offload profiles need both gpu_layers and a positive host_memory_mib",
                     profile.id
                 )),
             }
         }
-        for accelerator in [Accelerator::Cuda, Accelerator::Metal] {
+        for accelerator in [Accelerator::Cuda, Accelerator::Metal, Accelerator::Cpu] {
             let keys: Vec<_> = self.profiles_for(accelerator).iter().map(|p| p.preference()).collect();
             if keys.windows(2).any(|pair| pair[0] == pair[1]) {
                 problems.push(format!("{at}: two {accelerator} profiles have the same context, GPU layers and slots"));
@@ -491,11 +492,12 @@ mod tests {
     const ALL_MODELS: &str = include_str!("../../../tests/fixtures/all-models.json");
 
     #[test]
-    fn shipped_catalog_serves_only_the_h2o_models() {
+    fn shipped_catalog_serves_only_h2o_q8() {
         let catalog = Catalog::parse(SHIPPED).expect("config/models.json is valid");
         let ids: Vec<_> = catalog.models.iter().map(|model| model.id.as_str()).collect();
-        assert_eq!(ids, ["h2o", "h2o-q8"]);
-        assert_eq!(catalog.default_models, ["h2o"]);
+        assert_eq!(ids, ["h2o-q8"]);
+        assert!(catalog.model("h2o").is_none());
+        assert_eq!(catalog.default_models, ["h2o-q8"]);
         let all = Catalog::parse(ALL_MODELS).expect("tests/fixtures/all-models.json is valid");
         assert_eq!(all.model("clef").unwrap().capability(), Capability::Systemone);
     }
@@ -534,7 +536,7 @@ mod tests {
     #[test]
     fn h2o_is_a_systemone_model_with_slots_on_its_big_profile() {
         let catalog = Catalog::parse(SHIPPED).unwrap();
-        let h2o = catalog.model("h2o").unwrap();
+        let h2o = catalog.model("h2o-q8").unwrap();
         assert_eq!(h2o.capability(), Capability::Systemone);
         assert_eq!(serde_json::to_string(&h2o.backend).unwrap(), "\"llama-server-h2o\"");
         assert_eq!(h2o.profile("cuda-40960-x3").unwrap().slots(), 3);

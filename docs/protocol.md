@@ -15,7 +15,7 @@ missing or incorrect credentials never produce HTTP 401 on these routes.
 curl https://pool.example.com/v1/models
 curl https://pool.example.com/v1/systemone \
   -H 'Content-Type: application/json' \
-  -d '{"model":"h2o","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
+  -d '{"model":"h2o-q8","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
 ```
 
 Every inference request uses the client label `public` for fairness and logs.
@@ -35,7 +35,7 @@ routes for development. In `keys` mode, miner routes require a token from
 
 ## Connection
 
-1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models. Miners reject unknown catalog fields, so the pool leaves out what a miner did not ask for: offload profiles unless `?features=offload`, and `h2o` models (backend `llama-server-h2o`, profile field `parallel_slots`) unless `?features=offload,h2o`.
+1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models. Miners reject unknown catalog fields, so the pool leaves out what a miner did not ask for: offload profiles unless `?features=offload`, and `h2o` models (backend `llama-server-h2o`, profile field `parallel_slots`) unless `?features=offload,h2o`. CPU profiles are sent only with `?features=offload,h2o,cpu`; v0.2.6 miners receive `h2o-q8` with CUDA profiles and a revision computed from that filtered view. The pool accepts both revisions in miner hello. The `h2o` feature names the backend, not a model id: the only served model is `h2o-q8`, and `h2o` is unknown.
 2. `GET /miner/v1/connect` upgrades to WebSocket with subprotocol `ai-pool.v1`. In `keys` mode with `POOL_MINER_AUTH=token`, both miner routes need `Authorization: Bearer <miner token>` from `POOL_MINER_TOKENS`; `POOL_MINER_AUTH=open` accepts anonymous miners. Frames are limited to 4 MiB.
 3. The miner sends `hello` within 10 s: protocol version, installation `miner_id`, version, catalog revision and hardware. The pool answers `welcome {session_id, heartbeat_seconds}`, or `error` and closes (e.g. `protocol_mismatch`).
 4. The miner sends `capacity`, a full snapshot of devices (`slots` concurrent inferences each) and loaded models (`model`, `model_revision`, `profile`, `device`, `context_tokens`). The pool ignores entries whose revision or profile does not match its catalog. A new snapshot replaces the old one.

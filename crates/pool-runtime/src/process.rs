@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use pool_protocol::Backend;
+use pool_protocol::{Accelerator, Backend};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, BufReader},
     process::Command,
@@ -28,6 +28,7 @@ pub struct LaunchSpec {
     pub server: PathBuf,
     pub weights: PathBuf,
     pub backend: Backend,
+    pub accelerator: Accelerator,
     /// Tokens per slot. For H2O this is the prompt limit; the server gets two more.
     pub context_tokens: u32,
     /// `--parallel` slots (H2O only); Clef and chat always run one.
@@ -38,6 +39,8 @@ pub struct LaunchSpec {
     pub microbatch_tokens: Option<u32>,
     /// Restricts the child to one GPU (`CUDA_VISIBLE_DEVICES`).
     pub cuda_device: Option<String>,
+    /// CPU worker threads on ARM Linux; other accelerators use runtime defaults.
+    pub cpu_threads: Option<usize>,
 }
 
 impl LaunchSpec {
@@ -72,27 +75,31 @@ impl LaunchSpec {
             // refactor-tool's engine.rs flags for H2O, except 2048-token prompt chunks, no RAM
             // prompt cache (5% more questions answered) and no context checkpoints (9% more
             // with one question per request; see docs/qualification/h2o-flags.md).
-            // Only the context, slots and -ngl vary.
-            Backend::LlamaServerH2o => args.extend(
-                [
-                    "-b",
-                    "2048",
-                    "-ub",
-                    "2048",
-                    "-fa",
-                    "on",
-                    "-ctk",
-                    "f16",
-                    "-ctv",
-                    "f16",
-                    "--no-context-shift",
-                    "--cache-ram",
-                    "0",
-                    "--ctx-checkpoints",
-                    "0",
-                ]
-                .map(String::from),
-            ),
+            // CPU uses smaller chunks to bound cancellation delay between decode
+            // calls. Context, slots, placement and CPU threads also vary.
+            Backend::LlamaServerH2o => {
+                let batch = if self.accelerator == Accelerator::Cpu { "512" } else { "2048" };
+                args.extend(
+                    [
+                        "-b",
+                        batch,
+                        "-ub",
+                        batch,
+                        "-fa",
+                        "on",
+                        "-ctk",
+                        "f16",
+                        "-ctv",
+                        "f16",
+                        "--no-context-shift",
+                        "--cache-ram",
+                        "0",
+                        "--ctx-checkpoints",
+                        "0",
+                    ]
+                    .map(String::from),
+                );
+            }
             Backend::LlamaServerChat => {
                 args.extend([
                     "-b".into(),
@@ -101,6 +108,14 @@ impl LaunchSpec {
                     self.microbatch_tokens.unwrap_or(512).to_string(),
                     "--no-context-shift".into(),
                 ]);
+            }
+        }
+        if self.accelerator == Accelerator::Cpu {
+            // Without mmap, repacked tensors replace their file-backed copy.
+            // b11374 calls the former --no-mmap option --load-mode none.
+            args.extend(["--device", "none", "--no-op-offload", "--load-mode", "none"].map(String::from));
+            if let Some(threads) = self.cpu_threads {
+                args.extend(["-t".into(), threads.to_string(), "-tb".into(), threads.to_string()]);
             }
         }
         args
@@ -289,12 +304,14 @@ mod tests {
             server: "llama-server".into(),
             weights: "m.gguf".into(),
             backend,
+            accelerator: Accelerator::Cuda,
             context_tokens: 40960,
             slots,
             gpu_layers: 99,
             batch_tokens: None,
             microbatch_tokens: None,
             cuda_device: None,
+            cpu_threads: None,
         }
     }
 
@@ -320,6 +337,31 @@ mod tests {
             assert_eq!(value(&args, flag), expected, "{flag}");
         }
         assert!(args.contains(&"--no-context-shift".to_string()));
+    }
+
+    #[test]
+    fn cpu_uses_bounded_batches_no_mmap_and_detected_threads() {
+        let mut cpu = spec(Backend::LlamaServerH2o, 1);
+        cpu.accelerator = Accelerator::Cpu;
+        cpu.gpu_layers = 0;
+        cpu.cpu_threads = Some(6);
+        let args = cpu.args(1, "key");
+        for (flag, expected) in [
+            ("-ngl", "0"),
+            ("-b", "512"),
+            ("-ub", "512"),
+            ("-t", "6"),
+            ("-tb", "6"),
+            ("--device", "none"),
+            ("--load-mode", "none"),
+        ] {
+            assert_eq!(value(&args, flag), expected);
+        }
+        assert!(args.iter().any(|arg| arg == "--no-op-offload"));
+        let cuda = spec(Backend::LlamaServerH2o, 1).args(1, "key");
+        for flag in ["--load-mode", "--device", "--no-op-offload", "-t", "-tb"] {
+            assert!(!cuda.iter().any(|arg| arg == flag));
+        }
     }
 
     #[test]

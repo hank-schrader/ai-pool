@@ -1,5 +1,8 @@
 //! Accelerator detection. Unknown memory is an error, never "unlimited".
 
+#[cfg(any(test, all(target_os = "linux", target_arch = "aarch64")))]
+mod cpu;
+
 use std::process::Command;
 
 use pool_protocol::{
@@ -8,13 +11,15 @@ use pool_protocol::{
 };
 
 /// Safety margin kept free on a dedicated GPU beyond the profile figures.
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 const CUDA_MARGIN_MIB: u64 = 256;
 /// Share of unified memory a Metal miner may plan to use (an estimate).
 const UNIFIED_SHARE: f64 = 0.70;
-/// System RAM left for the OS and other programs when weights are offloaded.
+/// System RAM left for the OS and other programs by CPU and offload profiles.
 const RAM_MARGIN_MIB: u64 = 2048;
 
 /// Memory the OS could give out now, including reclaimable cache.
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 fn available_ram_mib() -> u64 {
     let mut system = sysinfo::System::new();
     system.refresh_memory();
@@ -22,7 +27,7 @@ fn available_ram_mib() -> u64 {
 }
 
 #[derive(Clone, Debug)]
-pub struct Gpu {
+pub struct DeviceInfo {
     pub index: u32,
     pub name: String,
     pub total_mib: u64,
@@ -33,44 +38,50 @@ pub struct Gpu {
 #[derive(Clone, Debug)]
 pub struct Machine {
     pub accelerator: Accelerator,
-    pub gpus: Vec<Gpu>,
-    /// The GPU this miner serves from.
+    pub devices: Vec<DeviceInfo>,
+    /// The compute device this miner serves from.
     pub selected: usize,
     /// Memory the profile plan may use on the selected device.
     pub budget_mib: u64,
     pub budget_note: String,
     /// System RAM offload profiles may use for weights kept on the host;
-    /// 0 where offloading does not apply (unified memory).
+    /// 0 where a separate host reservation does not apply (CPU/unified memory).
     pub ram_budget_mib: u64,
+    /// CPU worker threads selected from the host topology (ARM Linux only).
+    pub cpu_threads: Option<usize>,
 }
 
 impl Machine {
-    pub fn gpu(&self) -> &Gpu {
-        &self.gpus[self.selected]
+    pub fn device(&self) -> &DeviceInfo {
+        &self.devices[self.selected]
     }
 
     /// Value for `CUDA_VISIBLE_DEVICES`, when relevant.
     pub fn cuda_device(&self) -> Option<String> {
-        (self.accelerator == Accelerator::Cuda).then(|| self.gpu().index.to_string())
+        (self.accelerator == Accelerator::Cuda).then(|| self.device().index.to_string())
     }
 
     pub fn device_id(&self) -> String {
-        format!("gpu{}", self.gpu().index)
+        format!("{}{}", if self.accelerator == Accelerator::Cpu { "cpu" } else { "gpu" }, self.device().index)
     }
 
     pub fn hardware(&self) -> Hardware {
-        let gpu = self.gpu();
+        let device = self.device();
         Hardware {
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             accelerator: self.accelerator,
-            devices: vec![Device { id: self.device_id(), name: gpu.name.clone(), memory_total_mib: gpu.total_mib }],
+            devices: vec![Device {
+                id: self.device_id(),
+                name: device.name.clone(),
+                memory_total_mib: device.total_mib,
+            }],
         }
     }
 
     pub fn describe(&self) -> String {
-        let gpu = self.gpu();
-        let driver = if gpu.driver.is_empty() { String::new() } else { format!(", driver {}", gpu.driver) };
+        let device = self.device();
+        let driver = if device.driver.is_empty() { String::new() } else { format!(", driver {}", device.driver) };
         let ram = if self.ram_budget_mib > 0 {
             format!("; system RAM for offloading {} MiB (available minus {RAM_MARGIN_MIB} MiB)", self.ram_budget_mib)
         } else {
@@ -78,7 +89,7 @@ impl Machine {
         };
         format!(
             "{} {} ({} MiB total, {} MiB free{driver}); planning budget {} MiB ({}){ram}",
-            self.accelerator, gpu.name, gpu.total_mib, gpu.free_mib, self.budget_mib, self.budget_note
+            self.accelerator, device.name, device.total_mib, device.free_mib, self.budget_mib, self.budget_note
         )
     }
 }
@@ -87,9 +98,13 @@ pub fn detect(device: Option<u32>) -> Result<Machine, String> {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         return detect_apple();
     }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    return cpu::detect(device);
+    #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
     detect_nvidia(device)
 }
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 fn detect_nvidia(device: Option<u32>) -> Result<Machine, String> {
     let output = Command::new("nvidia-smi")
         .args(["--query-gpu=index,name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"])
@@ -115,15 +130,17 @@ fn detect_nvidia(device: Option<u32>) -> Result<Machine, String> {
     let budget_mib = gpus[selected].free_mib.saturating_sub(CUDA_MARGIN_MIB);
     Ok(Machine {
         accelerator: Accelerator::Cuda,
-        gpus,
+        devices: gpus,
         selected,
         budget_mib,
         budget_note: format!("free memory minus {CUDA_MARGIN_MIB} MiB"),
         ram_budget_mib: available_ram_mib().saturating_sub(RAM_MARGIN_MIB),
+        cpu_threads: None,
     })
 }
 
-fn parse_nvidia_smi(text: &str) -> Result<Vec<Gpu>, String> {
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "aarch64"))))]
+fn parse_nvidia_smi(text: &str) -> Result<Vec<DeviceInfo>, String> {
     let mut gpus = Vec::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let fields: Vec<_> = line.split(',').map(str::trim).collect();
@@ -135,7 +152,7 @@ fn parse_nvidia_smi(text: &str) -> Result<Vec<Gpu>, String> {
                 .parse::<u64>()
                 .map_err(|_| format!("nvidia-smi reported no usable {what} ({value:?}) for GPU {index}"))
         };
-        gpus.push(Gpu {
+        gpus.push(DeviceInfo {
             index: number(index, "index")? as u32,
             name: name.to_string(),
             total_mib: number(total, "total memory")?,
@@ -160,7 +177,7 @@ fn detect_apple() -> Result<Machine, String> {
     let budget_mib = (total_mib as f64 * UNIFIED_SHARE) as u64;
     Ok(Machine {
         accelerator: Accelerator::Metal,
-        gpus: vec![Gpu {
+        devices: vec![DeviceInfo {
             index: 0,
             name: if name.is_empty() { "Apple Silicon".into() } else { name },
             total_mib,
@@ -171,6 +188,7 @@ fn detect_apple() -> Result<Machine, String> {
         budget_mib,
         budget_note: format!("estimate: {:.0}% of unified memory", UNIFIED_SHARE * 100.0),
         ram_budget_mib: 0,
+        cpu_threads: None,
     })
 }
 

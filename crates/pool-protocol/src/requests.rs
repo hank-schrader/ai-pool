@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn h2o_takes_one_option_questions_and_noul_aliases_but_no_more_than_16() {
         let catalog = catalog();
-        let h2o = catalog.model("h2o").unwrap();
+        let h2o = catalog.model("h2o-q8").unwrap();
         let ok = json!({"state": {"a": 1}, "questions": {
             "one": {"type": "choice", "instructions": "x", "criteria": {"only": null}},
             "yes": {"type": "noul", "instructions": "x", "criteria": {"yes": "it is", "no": "it is not"}},

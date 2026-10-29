@@ -16,7 +16,7 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use pool_protocol::{Backend, Catalog};
+use pool_protocol::{Accelerator, Backend, Catalog};
 use tower_http::trace::TraceLayer;
 
 use crate::{auth::Auth, config::Config, scheduler::SchedulerHandle};
@@ -26,6 +26,9 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub catalog: Arc<Catalog>,
     pub catalog_revision: Arc<str>,
+    /// The catalog without CPU profiles, for miners through 0.2.6.
+    pub h2o_catalog: Arc<Catalog>,
+    pub h2o_catalog_revision: Arc<str>,
     /// The catalog without h2o models, for miners 0.1.3 that know offload but not h2o.
     pub offload_catalog: Arc<Catalog>,
     pub offload_catalog_revision: Arc<str>,
@@ -42,7 +45,13 @@ pub struct AppState {
 impl AppState {
     /// Starts the scheduler task; call inside a Tokio runtime.
     pub fn new(config: Config, catalog: Catalog) -> Self {
-        let mut offload = catalog.clone();
+        let mut h2o = catalog.clone();
+        for model in &mut h2o.models {
+            model.profiles.retain(|profile| profile.accelerator != Accelerator::Cpu);
+        }
+        h2o.models.retain(|model| !model.profiles.is_empty());
+        h2o.default_models.retain(|id| h2o.models.iter().any(|model| &model.id == id));
+        let mut offload = h2o.clone();
         offload.models.retain(|model| model.backend != Backend::LlamaServerH2o);
         let mut legacy = offload.clone();
         for model in &mut legacy.models {
@@ -53,6 +62,8 @@ impl AppState {
         let stats_publisher = stats_stream::StatsPublisher::spawn(scheduler.stats_receiver(), config.max_stats_streams);
         Self {
             catalog_revision: catalog.revision().into(),
+            h2o_catalog_revision: h2o.revision().into(),
+            h2o_catalog: Arc::new(h2o),
             offload_catalog_revision: offload.revision().into(),
             offload_catalog: Arc::new(offload),
             legacy_catalog_revision: legacy.revision().into(),

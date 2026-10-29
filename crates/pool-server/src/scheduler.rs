@@ -1839,13 +1839,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn mixed_h2o_question_counts_use_total_work_but_keep_prompt_context_and_stats() {
         let mut scheduler = scheduler();
-        let mut slow = miner_model(&mut scheduler, "slow", "h2o", "cuda-8192");
-        let mut fast = miner_model(&mut scheduler, "fast", "h2o", "cuda-40960-x6");
+        let mut slow = miner_model(&mut scheduler, "slow", "h2o-q8", "cuda-8192");
+        let mut fast = miner_model(&mut scheduler, "fast", "h2o-q8", "cuda-40960-x6");
         speed(&mut scheduler, "slow", 1000.0, 2);
         speed(&mut scheduler, "fast", 4000.0, 12);
         let mut receivers = Vec::new();
         for (id, count, expected) in [("multi", 4, "fast"), ("single", 1, "slow")] {
-            let model = scheduler.catalog.model("h2o").unwrap();
+            let model = scheduler.catalog.model("h2o-q8").unwrap();
             let questions: serde_json::Map<String, Value> =
                 (0..count).map(|i| (i.to_string(), json!({"type": "noul", "instructions": "test"}))).collect();
             let payload = json!({"state": "test", "questions": questions});

@@ -89,6 +89,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cpu_is_restricted_to_linux_arm() {
+        let runtime = embedded().runtime("llama-b11374").unwrap();
+        assert!(runtime.target("aarch64-unknown-linux-gnu", Accelerator::Cpu).is_some());
+        assert!(runtime.target("x86_64-unknown-linux-gnu", Accelerator::Cpu).is_none());
+        assert!(runtime.target("aarch64-apple-darwin", Accelerator::Cpu).is_none());
+    }
+
+    #[test]
     fn embedded_manifest_matches_catalog_runtime() {
         let catalog = pool_protocol::Catalog::parse(include_str!("../../../config/models.json")).unwrap();
         for runtime in &catalog.runtimes {
@@ -99,7 +107,7 @@ mod tests {
                     Accelerator::Cuda => assert!(target.min_driver.as_deref().is_some_and(|version| {
                         !version.is_empty() && version.split('.').all(|part| part.parse::<u32>().is_ok())
                     })),
-                    Accelerator::Metal => assert!(target.min_driver.is_none()),
+                    Accelerator::Metal | Accelerator::Cpu => assert!(target.min_driver.is_none()),
                 }
                 for archive in &target.archives {
                     assert_eq!(archive.sha256.len(), 64);

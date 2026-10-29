@@ -268,15 +268,15 @@
       ]
     },
     {
-      "id": "h2o",
-      "description": "H2O-Lightning-4B BF16 decision model used by refactor-tool (Apache-2.0, converted from h2oai/h2o-lightning-4b@672dc01e with llama.cpp b92761a --outtype bf16 --no-mtp). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own as refactor-tool's local engine does (policy single). Use POST /v1/systemone.",
+      "id": "h2o-q8",
+      "description": "H2O-Lightning-4B Q8_0 decision model used by refactor-tool (Apache-2.0; quantized from the h2o BF16 GGUF sha256 74ac588b with llama-quantize from runtime llama-b11374, hosted on the pool host). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own (policy single). Use POST /v1/systemone.",
       "backend": "llama-server-h2o",
       "runtime": "llama-b11374",
       "weights": {
-        "filename": "h2o-lightning-4b-672dc01e.BF16.gguf",
-        "url": "https://huggingface.co/killsan/h2o-lightning-4b-bf16-gguf/resolve/55d18a591b5c2a25b5cf9d083e0e1eabba414c37/h2o-lightning-4b-672dc01e.BF16.gguf",
-        "size_bytes": 8424393120,
-        "sha256": "74ac588b31d4be40bf2fe1b4e22b58c26ca2d33c26bfefaf45f1446f3ccbbd31"
+        "filename": "h2o-lightning-4b-672dc01e.Q8_0.gguf",
+        "url": "https://ai.metalloobrabotka.online/models/h2o-lightning-4b-672dc01e.Q8_0.gguf",
+        "size_bytes": 4482402720,
+        "sha256": "4d4f7f5e601fb78d726761d9aa2b1ad0dc17e75fd65b0b59dd15b31df0837f84"
       },
       "limits": {
         "request_bytes": 1048576,
@@ -292,22 +292,22 @@
           "id": "cuda-8192",
           "accelerator": "cuda",
           "context_tokens": 8192,
-          "memory_mib": 9216,
-          "memory_source": "measured"
+          "memory_mib": 5120,
+          "memory_source": "estimate"
         },
         {
           "id": "cuda-40960-x3",
           "accelerator": "cuda",
           "context_tokens": 40960,
-          "memory_mib": 13312,
-          "memory_source": "measured",
+          "memory_mib": 9216,
+          "memory_source": "estimate",
           "parallel_slots": 3
         },
         {
           "id": "cuda-40960-x4",
           "accelerator": "cuda",
           "context_tokens": 40960,
-          "memory_mib": 14336,
+          "memory_mib": 10240,
           "memory_source": "estimate",
           "parallel_slots": 4
         },
@@ -315,9 +315,23 @@
           "id": "cuda-40960-x6",
           "accelerator": "cuda",
           "context_tokens": 40960,
-          "memory_mib": 17408,
+          "memory_mib": 13312,
           "memory_source": "estimate",
           "parallel_slots": 6
+        },
+        {
+          "id": "cpu-4096",
+          "accelerator": "cpu",
+          "context_tokens": 4096,
+          "memory_mib": 6144,
+          "memory_source": "measured"
+        },
+        {
+          "id": "cpu-8192",
+          "accelerator": "cpu",
+          "context_tokens": 8192,
+          "memory_mib": 6144,
+          "memory_source": "measured"
         }
       ]
     }

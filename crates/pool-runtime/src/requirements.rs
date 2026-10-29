@@ -159,6 +159,47 @@ fn install_hint(library: &str, release: &str) -> String {
     }
 }
 
+/// Prerequisites of the pinned Linux ARM runtime, also checked before it is installed.
+pub fn platform() -> Vec<Check> {
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+    {
+        let version = unsafe { std::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) }.to_string_lossy();
+        let mut checks = vec![glibc(&version)];
+        let release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+        for library in ["libgomp.so.1", "libssl.so.3", "libcrypto.so.3"] {
+            let name = std::ffi::CString::new(library).expect("library name");
+            let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) };
+            if handle.is_null() {
+                checks.push(Check::fail(
+                    "system library",
+                    format!("missing {library}; {}", install_hint(library, &release)),
+                ));
+            } else {
+                unsafe { libc::dlclose(handle) };
+                checks.push(Check::ok("system library", library));
+            }
+        }
+        checks
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")))]
+    Vec::new()
+}
+
+#[cfg(any(test, all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")))]
+fn glibc(version: &str) -> Check {
+    let parts: Option<Vec<u32>> = version.split('.').map(|part| part.parse().ok()).collect();
+    if parts.is_some_and(|parts| parts.as_slice() >= [2, 38].as_slice()) {
+        Check::ok("glibc", format!("{version} (required >= 2.38)"))
+    } else {
+        Check::fail(
+            "glibc",
+            format!(
+                "{version:?}; the ARM runtime requires >= 2.38. Upgrade to Fedora 39+ or Ubuntu 24.04+ (Debian 13+)."
+            ),
+        )
+    }
+}
+
 pub fn loader_output(text: &str, release: &str) -> Vec<Check> {
     let mut problems = BTreeSet::new();
     for line in
@@ -323,6 +364,18 @@ mod tests {
         );
         assert_eq!(direct.len(), 1);
         assert!(direct[0].message.contains("libgomp1"));
+    }
+
+    #[test]
+    fn arm_prerequisites_use_the_measured_glibc_floor_and_cpu_packages() {
+        assert_eq!(glibc("2.38").status, "ok");
+        assert_eq!(glibc("2.43").status, "ok");
+        assert_eq!(glibc("2.37").status, "fail");
+        assert_eq!(glibc("unknown").status, "fail");
+        assert_eq!(install_hint("libgomp.so.1", "ID=fedora"), "sudo dnf install libgomp");
+        assert_eq!(install_hint("libgomp.so.1", "ID=ubuntu"), "sudo apt-get install libgomp1");
+        assert_eq!(install_hint("libssl.so.3", "ID=fedora"), "sudo dnf install openssl-libs");
+        assert_eq!(install_hint("libssl.so.3", "ID=ubuntu\nVERSION_ID=24.04"), "sudo apt-get install libssl3t64");
     }
 
     #[test]

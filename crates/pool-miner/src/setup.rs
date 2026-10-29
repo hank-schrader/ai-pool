@@ -92,7 +92,7 @@ pub fn runtime_target(
     })?;
     if !target.qualified {
         let question = format!(
-            "The {} {} runtime has not been tested on real hardware yet. Use it anyway?",
+            "The {} {} runtime has not completed qualification. Use it anyway?",
             target.target, target.accelerator
         );
         let allowed = allow_unqualified
@@ -201,7 +201,7 @@ pub async fn install_runtime(
 ) -> Result<InstalledRuntime, String> {
     let (spec, target) = runtime_target(catalog, model, machine, options.allow_unqualified_runtime)?;
     if let Some(minimum) = &target.min_driver {
-        pool_runtime::requirements::ensure(&[pool_runtime::requirements::driver(&machine.gpu().driver, minimum)])
+        pool_runtime::requirements::ensure(&[pool_runtime::requirements::driver(&machine.device().driver, minimum)])
             .map_err(|error| error.to_string())?;
     }
     if options.llama_server.is_none() && !install::is_installed(&options.cache, spec, target) {
@@ -312,10 +312,11 @@ pub fn preflight(catalog: &Catalog, selected: &[&Model], machine: &Machine, opti
         if runtimes.insert(&model.runtime) {
             let (_, target) = runtime_target(catalog, model, machine, options.allow_unqualified_runtime)?;
             if let Some(minimum) = &target.min_driver {
-                checks.push(pool_runtime::requirements::driver(&machine.gpu().driver, minimum));
+                checks.push(pool_runtime::requirements::driver(&machine.device().driver, minimum));
             }
         }
     }
+    checks.extend(pool_runtime::requirements::platform());
     for check in &checks {
         eprintln!("{}", check.line());
     }
@@ -360,12 +361,14 @@ async fn start_prepared(
             server: runtime.server.clone(),
             weights: weights.clone(),
             backend: model.backend,
+            accelerator: machine.accelerator,
             context_tokens: choice.profile.context_tokens,
             slots: choice.profile.slots(),
             gpu_layers: model.execution.gpu_layers,
             batch_tokens: model.execution.batch_tokens,
             microbatch_tokens: model.execution.microbatch_tokens,
             cuda_device: machine.cuda_device(),
+            cpu_threads: machine.cpu_threads,
         };
         let in_use = options.cache.hold_model(&model.weights).map_err(|error| error.to_string())?;
         let profiles = startup_profiles(
@@ -405,7 +408,8 @@ fn startup_profiles(
         .into_iter()
         .filter(|profile| {
             profile.id == choice.profile.id
-                || (profile.memory_mib < choice.profile.memory_mib
+                || (profile.memory_mib <= choice.profile.memory_mib
+                    && profile.preference() < choice.profile.preference()
                     && profile.host_memory_mib.unwrap_or(0) <= ram_budget_mib)
         })
         .cloned()
@@ -430,7 +434,7 @@ mod tests {
     #[test]
     fn exact_startup_preserves_profile_and_placement_without_step_down() {
         let catalog = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
-        let model = catalog.model("h2o").unwrap();
+        let model = catalog.model("h2o-q8").unwrap();
         let choice =
             Choice { model, profile: model.profile("cuda-40960-x4").unwrap(), placement: Placement::Published };
         assert!(startup_profiles(&choice, Accelerator::Cuda, 20000, false).len() > 1);
@@ -444,9 +448,18 @@ mod tests {
     }
 
     #[test]
+    fn smaller_context_can_step_down_with_the_same_measured_memory() {
+        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let model = catalog.model("h2o-q8").unwrap();
+        let choice = Choice { model, profile: model.profile("cpu-8192").unwrap(), placement: Placement::Published };
+        let profiles = startup_profiles(&choice, Accelerator::Cpu, 0, false);
+        assert_eq!(profiles.iter().map(|(p, _)| p.id.as_str()).collect::<Vec<_>>(), ["cpu-8192", "cpu-4096"]);
+    }
+
+    #[test]
     fn disk_plan_reserves_each_weight_once_and_honors_runtime_overrides() {
         let catalog = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
-        let mut model = catalog.model("h2o").unwrap().clone();
+        let mut model = catalog.model("h2o-q8").unwrap().clone();
         model.weights.size_bytes = 1_000_000_000;
         let root = std::env::temp_dir().join(format!("ai-pool-disk-plan-{}", uuid::Uuid::new_v4()));
         let cache = Cache::new(Some(root.clone())).unwrap();

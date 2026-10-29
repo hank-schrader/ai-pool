@@ -100,6 +100,8 @@ async fn fake_miner(
     seen: mpsc::UnboundedSender<Seen>,
 ) {
     let catalog = Catalog::parse(CATALOG).unwrap();
+    let accelerator = catalog.model(models[0].0).unwrap().profile(models[0].1).unwrap().accelerator;
+    let device = if accelerator == Accelerator::Cpu { "cpu0" } else { "gpu0" };
     let mut request = format!("ws://{addr}/miner/v1/connect").into_client_request().unwrap();
     request.headers_mut().insert("sec-websocket-protocol", SUBPROTOCOL.parse().unwrap());
     if let Some(token) = token {
@@ -116,9 +118,9 @@ async fn fake_miner(
         catalog_revision: catalog.revision(),
         hardware: Hardware {
             os: "linux".into(),
-            arch: "x86_64".into(),
-            accelerator: Accelerator::Cuda,
-            devices: vec![Device { id: "gpu0".into(), name: "Fake GPU".into(), memory_total_mib: 16384 }],
+            arch: if accelerator == Accelerator::Cpu { "aarch64" } else { "x86_64" }.into(),
+            accelerator,
+            devices: vec![Device { id: device.into(), name: "Fake device".into(), memory_total_mib: 16384 }],
         },
     }))
     .await
@@ -137,13 +139,13 @@ async fn fake_miner(
                 model: model_id.to_string(),
                 model_revision: catalog.model_revision(model),
                 profile: profile.to_string(),
-                device: "gpu0".into(),
+                device: device.into(),
                 context_tokens: model.profile(profile).unwrap().context_tokens,
             }
         })
         .collect();
     sink.send(send(MinerMessage::Capacity {
-        devices: vec![DeviceSlots { id: "gpu0".into(), slots: slots.unwrap_or(1) }],
+        devices: vec![DeviceSlots { id: device.into(), slots: slots.unwrap_or(1) }],
         models: loaded,
     }))
     .await
@@ -687,7 +689,7 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
     assert_eq!(parsed.revision(), legacy["catalog_revision"].as_str().unwrap());
 
     let has_h2o =
-        |reply: &Value| reply["catalog"]["models"].as_array().unwrap().iter().any(|model| model["id"] == "h2o");
+        |reply: &Value| reply["catalog"]["models"].as_array().unwrap().iter().any(|model| model["id"] == "h2o-q8");
     assert!(!has_h2o(&legacy));
 
     let offload: Value =
@@ -708,7 +710,7 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
 }
 
 #[tokio::test]
-async fn the_shipped_catalog_serves_only_the_h2o_models_and_turns_old_miners_away() {
+async fn the_shipped_catalog_serves_only_h2o_q8_and_turns_old_miners_away() {
     let shipped = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
     let addr = start_with_state(AppState::new(config(), shipped)).await;
     for features in ["", "?features=offload"] {
@@ -724,17 +726,77 @@ async fn the_shipped_catalog_serves_only_the_h2o_models_and_turns_old_miners_awa
         .await
         .unwrap();
     let ids: Vec<_> = current["catalog"]["models"].as_array().unwrap().iter().map(|model| &model["id"]).collect();
-    assert_eq!(ids, ["h2o", "h2o-q8"]);
-    assert_eq!(current["catalog"]["default_models"], json!(["h2o"]));
+    assert_eq!(ids, ["h2o-q8"]);
+    assert_eq!(current["catalog"]["default_models"], json!(["h2o-q8"]));
+}
+
+#[tokio::test]
+async fn cpu_catalog_is_opt_in_and_old_miners_keep_their_revision() {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum OldAccelerator {
+        Cuda,
+        Metal,
+    }
+    let shipped = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+    let state = AppState::new(config(), shipped);
+    let old_revision = state.h2o_catalog_revision.clone();
+    let addr = start_with_state(state).await;
+    for features in ["offload,h2o", "h2o"] {
+        let reply: Value = reqwest::get(format!("http://{addr}/miner/v1/catalog?features={features}"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let catalog = Catalog::parse(&reply["catalog"].to_string()).unwrap();
+        assert_eq!(catalog.revision(), &*old_revision);
+        assert_eq!(reply["catalog_revision"], &*old_revision);
+        assert_eq!(catalog.default_models, ["h2o-q8"]);
+        for profile in reply["catalog"]["models"][0]["profiles"].as_array().unwrap() {
+            serde_json::from_value::<OldAccelerator>(profile["accelerator"].clone()).unwrap();
+        }
+        assert!(catalog.models[0].profiles.iter().all(|p| p.accelerator == Accelerator::Cuda));
+    }
+    let reply: Value = reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload,h2o,cpu"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let catalog = Catalog::parse(&reply["catalog"].to_string()).unwrap();
+    assert_eq!(reply["catalog_revision"], catalog.revision());
+    assert!(catalog.models[0].profiles.iter().any(|p| p.accelerator == Accelerator::Cpu));
+    let reply = post(
+        addr,
+        "/v1/systemone",
+        &json!({"model": "h2o", "state": "x", "questions": {"q": {"type": "noul", "instructions": "x"}}}),
+    )
+    .await;
+    assert_eq!(reply.status(), 404);
+    assert_eq!(reply.json::<Value>().await.unwrap()["error"]["code"], "model_not_found");
+}
+
+#[tokio::test]
+async fn cpu_miners_register_and_serve_systemone() {
+    let addr = start(config()).await;
+    let (tx, _seen) = mpsc::unbounded_channel();
+    fake_miner(addr, "asahi", None, &[("h2o-q8", "cpu-8192")], Behavior::Answer, tx).await;
+    wait_ready(addr, "h2o-q8", 1).await;
+    let body =
+        json!({"model": "h2o-q8", "state": "tokens:100", "questions": {"q": {"type": "noul", "instructions": "x"}}});
+    let reply = post(addr, "/v1/systemone", &body).await;
+    assert_eq!(reply.status(), 200);
+    assert_eq!(reply.headers()["x-model-profile"], "cpu-8192");
 }
 
 #[tokio::test]
 async fn a_device_runs_as_many_jobs_at_once_as_its_profile_has_slots() {
     let addr = start(config()).await;
     let (tx, mut seen) = mpsc::unbounded_channel();
-    fake_miner(addr, "gpu", None, &[("h2o", "cuda-40960-x3")], Behavior::Hang, tx).await;
-    wait_ready(addr, "h2o", 1).await;
-    let request = |n: u32| json!({"model": "h2o", "state": format!("tokens:{n}"), "questions": {"q": {"type": "noul", "instructions": "x"}}});
+    fake_miner(addr, "gpu", None, &[("h2o-q8", "cuda-40960-x3")], Behavior::Hang, tx).await;
+    wait_ready(addr, "h2o-q8", 1).await;
+    let request = |n: u32| json!({"model": "h2o-q8", "state": format!("tokens:{n}"), "questions": {"q": {"type": "noul", "instructions": "x"}}});
     let mut pending = Vec::new();
     for _ in 0..4 {
         let body = request(100);
@@ -801,10 +863,10 @@ async fn public_requests_share_active_and_queued_limits_across_authorization_hea
     let addr = start_with_state(state).await;
     let (tx, _seen) = mpsc::unbounded_channel();
     // This profile has three slots, so only the shared client limit can prevent dispatch.
-    fake_miner(addr, "gpu", None, &[("h2o", "cuda-40960-x3")], Behavior::Hang, tx).await;
-    wait_ready(addr, "h2o", 1).await;
+    fake_miner(addr, "gpu", None, &[("h2o-q8", "cuda-40960-x3")], Behavior::Hang, tx).await;
+    wait_ready(addr, "h2o-q8", 1).await;
     let body =
-        json!({"model": "h2o", "state": "tokens:100", "questions": {"q": {"type": "noul", "instructions": "x"}}});
+        json!({"model": "h2o-q8", "state": "tokens:100", "questions": {"q": {"type": "noul", "instructions": "x"}}});
     let mut pending = Vec::new();
     for (index, authorization) in [None, Some("Bearer wrong")].into_iter().enumerate() {
         let body = body.clone();

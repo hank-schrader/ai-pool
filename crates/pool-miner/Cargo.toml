@@ -1,6 +1,6 @@
 [package]
 name = "pool-miner"
-description = "ai-pool miner: serves catalog models from this machine's GPU"
+description = "ai-pool miner: serves catalog models from this machine's accelerator"
 version.workspace = true
 edition.workspace = true
 

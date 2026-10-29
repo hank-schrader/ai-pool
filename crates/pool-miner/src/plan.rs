@@ -40,6 +40,9 @@ impl Placement {
     }
 
     pub fn gpu_layers(self, profile: &Profile, default: u32) -> u32 {
+        if profile.accelerator == Accelerator::Cpu {
+            return 0;
+        }
         match self {
             Self::Published => profile.gpu_layers.unwrap_or(default),
             Self::Ram { .. } => 0,
@@ -332,15 +335,15 @@ mod tests {
     #[test]
     fn h2o_on_a_4_gb_gpu_with_2_5_gb_free_uses_ram() {
         let catalog = catalog();
-        let h2o = catalog.model("h2o").unwrap();
+        let h2o = catalog.model("h2o-q8").unwrap();
         let choices = plan(&[h2o], Accelerator::Cuda, 2560 - 256, 19000, &HashMap::new()).unwrap();
         let choice = &choices[0];
         assert_eq!(choice.profile.id, "cuda-8192");
         assert_eq!(choice.profile.context_tokens, 8192);
         assert_eq!(choice.profile.slots(), 1);
-        assert_eq!(choice.placement, Placement::Ram { memory_mib: 1437, host_memory_mib: 11264 });
+        assert_eq!(choice.placement, Placement::Ram { memory_mib: 1280, host_memory_mib: 7168 });
         assert_eq!(choice.placement.gpu_layers(choice.profile, h2o.execution.gpu_layers), 0);
-        assert_eq!(choice.profile.memory_mib, 9216);
+        assert_eq!(choice.profile.memory_mib, 5120);
         assert_eq!(choice.profile.gpu_layers, None);
         assert!(std::ptr::eq(choice.profile, h2o.profile("cuda-8192").unwrap()));
         crate::setup::print_plan(&choices);
@@ -349,10 +352,10 @@ mod tests {
     #[test]
     fn ram_fallback_needs_both_memory_budgets() {
         let catalog = catalog();
-        let h2o = [catalog.model("h2o").unwrap()];
-        assert!(plan(&h2o, Accelerator::Cuda, 1437, 11264, &HashMap::new()).is_ok());
-        assert!(plan(&h2o, Accelerator::Cuda, 1436, 11264, &HashMap::new()).is_err());
-        assert!(plan(&h2o, Accelerator::Cuda, 1437, 11263, &HashMap::new()).is_err());
+        let h2o = [catalog.model("h2o-q8").unwrap()];
+        assert!(plan(&h2o, Accelerator::Cuda, 1280, 7168, &HashMap::new()).is_ok());
+        assert!(plan(&h2o, Accelerator::Cuda, 1279, 7168, &HashMap::new()).is_err());
+        assert!(plan(&h2o, Accelerator::Cuda, 1280, 7167, &HashMap::new()).is_err());
         let full = plan(&h2o, Accelerator::Cuda, 9216, 20000, &HashMap::new()).unwrap();
         assert_eq!(full[0].placement, Placement::Published);
     }
@@ -360,15 +363,15 @@ mod tests {
     #[test]
     fn forced_profiles_and_contexts_keep_their_setting_in_ram() {
         let catalog = catalog();
-        let h2o = [catalog.model("h2o").unwrap()];
-        let overrides = parse_overrides(&["h2o=cuda-40960-x3".into()], &[]).unwrap();
+        let h2o = [catalog.model("h2o-q8").unwrap()];
+        let overrides = parse_overrides(&["h2o-q8=cuda-40960-x3".into()], &[]).unwrap();
         let forced = plan(&h2o, Accelerator::Cuda, 6000, 20000, &overrides).unwrap();
         assert_eq!(forced[0].profile.id, "cuda-40960-x3");
         assert_eq!(forced[0].profile.slots(), 3);
-        assert_eq!(forced[0].placement, Placement::Ram { memory_mib: 5533, host_memory_mib: 15360 });
+        assert_eq!(forced[0].placement, Placement::Ram { memory_mib: 5197, host_memory_mib: 11264 });
         assert!(plan(&h2o, Accelerator::Cuda, 2304, 20000, &overrides).is_err());
 
-        let overrides = parse_overrides(&[], &["h2o=40960".into()]).unwrap();
+        let overrides = parse_overrides(&[], &["h2o-q8=40960".into()]).unwrap();
         let forced = plan(&h2o, Accelerator::Cuda, 10000, 20000, &overrides).unwrap();
         assert_eq!(forced[0].profile.context_tokens, 40960);
         assert_eq!(forced[0].profile.id, "cuda-40960-x6");
@@ -382,16 +385,16 @@ mod tests {
     #[test]
     fn combined_pressure_does_not_trigger_ram_fallback() {
         let catalog = catalog();
-        let mut second = catalog.model("h2o").unwrap().clone();
+        let mut second = catalog.model("h2o-q8").unwrap().clone();
         second.id = "second".into();
-        let h2o = catalog.model("h2o").unwrap();
-        let error = plan(&[h2o, &second], Accelerator::Cuda, 15000, 40000, &HashMap::new()).unwrap_err();
+        let h2o = catalog.model("h2o-q8").unwrap();
+        let error = plan(&[h2o, &second], Accelerator::Cuda, 10000, 40000, &HashMap::new()).unwrap_err();
         assert!(error.contains("do not fit"), "{error}");
         assert!(!error.contains("automatic RAM fallback"), "{error}");
 
         // Both qualify individually for RAM, but their host reservations add up.
-        assert!(plan(&[h2o, &second], Accelerator::Cuda, 3000, 22000, &HashMap::new()).is_err());
-        let choices = plan(&[h2o, &second], Accelerator::Cuda, 3000, 23000, &HashMap::new()).unwrap();
+        assert!(plan(&[h2o, &second], Accelerator::Cuda, 3000, 14000, &HashMap::new()).is_err());
+        let choices = plan(&[h2o, &second], Accelerator::Cuda, 3000, 15000, &HashMap::new()).unwrap();
         assert!(choices.iter().all(|choice| choice.placement != Placement::Published));
     }
 
@@ -453,13 +456,13 @@ mod tests {
         assert!(full.iter().all(|choice| !choice.profile.offloaded()));
         assert!(benchmark_choices(clef, Accelerator::Cuda, 20000, 40000, Some(&Override::Context(5000))).is_err());
 
-        let h2o = catalog.model("h2o").unwrap();
+        let h2o = catalog.model("h2o-q8").unwrap();
         let ram = benchmark_choices(h2o, Accelerator::Cuda, 2304, 19000, None).unwrap();
         assert_eq!(ram.len(), 1);
         assert_eq!(ram[0].profile.id, "cuda-8192");
         assert_ne!(ram[0].placement, Placement::Published);
         let slots = benchmark_choices(h2o, Accelerator::Cuda, 15000, 19000, Some(&Override::Context(40960))).unwrap();
-        assert_eq!(slots.iter().map(|choice| choice.profile.slots()).collect::<Vec<_>>(), [3, 4]);
+        assert_eq!(slots.iter().map(|choice| choice.profile.slots()).collect::<Vec<_>>(), [3, 4, 6]);
         let forced =
             benchmark_choices(h2o, Accelerator::Cuda, 6000, 19000, Some(&Override::Profile("cuda-40960-x3".into())))
                 .unwrap();

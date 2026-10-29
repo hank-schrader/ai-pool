@@ -23,6 +23,9 @@ fn fits(model: &Model, machine: &Machine) -> String {
         return format!("no {} profile", machine.accelerator);
     }
     match profiles.iter().rev().find(|profile| profile_fits(profile, machine)) {
+        Some(best) if best.accelerator == pool_protocol::Accelerator::Cpu => {
+            format!("fits {} ({} MiB RAM)", best.id, best.memory_mib)
+        }
         Some(best) if best.offloaded() => format!(
             "fits {} ({} MiB + {} MiB RAM, offloaded)",
             best.id,
@@ -143,6 +146,12 @@ pub async fn download(cli: &Cli, models: &[String], import: Option<&Path>) -> Re
 
 pub async fn doctor(cli: &Cli) -> Result<(), String> {
     let mut problems = 0;
+    for check in pool_runtime::requirements::platform() {
+        if check.status == "fail" {
+            problems += 1;
+        }
+        println!("{}", check.line());
+    }
     let machine = match hardware::detect(cli.device) {
         Ok(machine) => {
             println!("[ok]   accelerator: {}", machine.describe());
@@ -164,6 +173,8 @@ pub async fn doctor(cli: &Cli) -> Result<(), String> {
                 let accelerator = machine.as_ref().map_or(
                     if cfg!(target_os = "macos") {
                         pool_protocol::Accelerator::Metal
+                    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+                        pool_protocol::Accelerator::Cpu
                     } else {
                         pool_protocol::Accelerator::Cuda
                     },
@@ -200,7 +211,7 @@ pub async fn doctor(cli: &Cli) -> Result<(), String> {
                     Ok((spec, target)) => {
                         if let Some(minimum) = &target.min_driver {
                             let check = match &machine {
-                                Some(machine) => pool_runtime::requirements::driver(&machine.gpu().driver, minimum),
+                                Some(machine) => pool_runtime::requirements::driver(&machine.device().driver, minimum),
                                 None => pool_runtime::requirements::Check::fail(
                                     "NVIDIA driver",
                                     format!("not found (nvidia-smi did not run); this runtime requires >= {minimum}"),

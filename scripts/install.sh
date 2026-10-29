@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install ai-pool (pool-miner, pool-server, clef-token-count) from a GitHub release
-# for the current user. Linux x86_64 and macOS Apple Silicon.
+# for the current user. Linux x86_64/aarch64 and macOS Apple Silicon.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hank-schrader/ai-pool/main/scripts/install.sh | sh
 #   sh install.sh --version v0.1.0
@@ -28,8 +28,9 @@ done
 
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) target="x86_64-unknown-linux-gnu" ;;
+    Linux-aarch64|Linux-arm64) target="aarch64-unknown-linux-gnu" ;;
     Darwin-arm64) target="aarch64-apple-darwin" ;;
-    *) echo "unsupported platform: $(uname -s) $(uname -m) (supported: Linux x86_64, macOS arm64)" >&2; exit 1 ;;
+    *) echo "unsupported platform: $(uname -s) $(uname -m) (supported: Linux x86_64/aarch64, macOS arm64)" >&2; exit 1 ;;
 esac
 
 if [ "$version" = latest ]; then

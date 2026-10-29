@@ -368,7 +368,8 @@ impl Miner {
                 let out = out.clone();
                 tokio::spawn(async move {
                     if let Some(handle) = handle {
-                        // dropping the request future disconnects from the runtime, which stops the work
+                        // Dropping the HTTP future closes its runtime connection.
+                        // llama-server applies cancellation between decode batches.
                         handle.abort();
                         let _ = handle.await;
                     }

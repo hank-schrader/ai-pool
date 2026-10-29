@@ -95,7 +95,12 @@ async fn serve(state: AppState, label: String, socket: WebSocket) {
             return;
         }
     };
-    let known = [&state.catalog_revision, &state.offload_catalog_revision, &state.legacy_catalog_revision];
+    let known = [
+        &state.catalog_revision,
+        &state.h2o_catalog_revision,
+        &state.offload_catalog_revision,
+        &state.legacy_catalog_revision,
+    ];
     if !known.iter().any(|revision| ***revision == *catalog_revision) {
         // Models are still checked one by one against the catalog in Capacity.
         warn!(%label, %miner_id, "miner started with a different catalog revision; restart it to pick up changes");

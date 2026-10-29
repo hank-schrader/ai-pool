@@ -27,7 +27,7 @@ Clients need only the pool URL. Model and inference routes are public and ignore
 curl https://pool.example.com/v1/models
 curl https://pool.example.com/v1/systemone \
   -H 'Content-Type: application/json' \
-  -d '{"model":"h2o","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
+  -d '{"model":"h2o-q8","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
 ```
 
 The server runs in `keys` mode to protect miner/admin routes. Miners need a token
@@ -42,7 +42,10 @@ Status: `curl -H "Authorization: Bearer <admin token>" https://pool.example.com/
 
 The pool also serves a public live status page at `/`, with totals from `/v1/stats` and live SSE at `/v1/stats/stream`.
 
-To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
+To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. It serves only
+`h2o-q8` (Q8_0, 4.48 GB), which is the default; the removed `h2o` id gets the
+normal `model_not_found` error. ARM CPU miners request the `cpu` catalog
+feature; v0.2.6 CUDA miners continue receiving a compatible CUDA-only view. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
 
 Cloudflare's proxy (orange cloud) passes WebSockets and SSE through. Miners send a heartbeat every 10 s, which stays well inside Cloudflare's 100 s idle limit.
 
