@@ -7,6 +7,9 @@
 //! fails the probe steps down to the next smaller one. A profile forced with
 //! `--profile`/`--context` is never changed silently; it stays unavailable.
 
+mod probe;
+use probe::probe;
+
 use std::{
     fs::File,
     sync::{Arc, Mutex},
@@ -40,6 +43,7 @@ pub struct Ready {
     pub pid: Option<u32>,
     /// H2O models only: the verified-label engine that renders and answers questions.
     pub h2o: Option<H2o>,
+    pub runtime: Option<Box<pool_protocol::runtime::RuntimeDescriptor>>,
 }
 
 impl Ready {
@@ -109,6 +113,7 @@ impl Hosted {
             profile: ready.profile.id.clone(),
             device: self.device.clone(),
             context_tokens: ready.profile.context_tokens,
+            runtime: ready.runtime,
         })
     }
 
@@ -134,6 +139,10 @@ impl Hosted {
         let ready = self.ready().ok_or_else(|| {
             RuntimeError::new(pool_protocol::messages::JobErrorCode::RuntimeFailed, "runtime is restarting")
         })?;
+        self.count_ready(payload, &ready).await
+    }
+
+    pub async fn count_ready(&self, payload: &Value, ready: &Ready) -> Result<u32, RuntimeError> {
         match &ready.h2o {
             Some(h2o) => h2o.count(payload).await,
             None => ready.client.chat_input_tokens(payload).await,
@@ -170,7 +179,13 @@ impl Hosted {
                 match server {
                     Ok(mut server) => {
                         let probed = tokio::select! {
-                            probed = probe(server.client(), hosted.model.backend, profile.context_tokens, profile.slots()) => probed,
+                            probed = async {
+                                let h2o = probe(server.client(), hosted.model.backend, profile.context_tokens, profile.slots()).await?;
+                                let runtime = if hosted.model.execution.chat_json {
+                                    Some(Box::new(pool_runtime::provenance::describe(&hosted.model, &profile, &launch, server.client(), server.instance_id()).await?))
+                                } else { None };
+                                Ok::<_, String>((h2o, runtime))
+                            } => probed,
                             _ = shutdown.cancelled() => {
                                 server.stop();
                                 let _ = tokio::time::timeout(Duration::from_secs(10), server.wait_exit()).await;
@@ -203,7 +218,7 @@ impl Hosted {
                             );
                             return;
                         }
-                        let h2o = probed.ok().flatten();
+                        let (h2o, runtime) = probed.expect("probe succeeded");
                         tracing::info!(
                             "{label}: {} passed its {}-token probe in {:.1}s",
                             profile.id,
@@ -215,6 +230,7 @@ impl Hosted {
                             profile,
                             pid: server.pid(),
                             h2o,
+                            runtime,
                         }));
                         changes.send_modify(|n| *n += 1);
                         let reason = loop {
@@ -258,43 +274,5 @@ impl Hosted {
                 }
             }
         })
-    }
-}
-
-/// Runs one request that fills most of the context, so the whole working set
-/// is really allocated and used once before the profile is advertised. H2O first
-/// verifies its label tokens and returns the engine the jobs will use.
-async fn probe(client: &LocalClient, backend: Backend, context: u32, slots: u32) -> Result<Option<H2o>, String> {
-    // leaves room for the prompt template and the question around the filler
-    let words = (context as usize * 85 / 100).saturating_sub(200);
-    let filler = "please ".repeat(words);
-    let request = async {
-        match backend {
-            Backend::LlamaServerSystemone => client
-                .systemone(&json!({
-                    "state": filler,
-                    "questions": {"probe": {"type": "noul", "instructions": "Is this text repetitive?"}}
-                }))
-                .await
-                .map(|_| None),
-            Backend::LlamaServerChat => client
-                .chat(&json!({"messages": [{"role": "user", "content": filler}], "max_tokens": 1}))
-                .await
-                .map(|_| None),
-            Backend::LlamaServerH2o => {
-                let h2o = H2o::start(client.clone(), context, slots).await?;
-                h2o.answer(&json!({
-                    "state": filler,
-                    "questions": {"probe": {"type": "noul", "instructions": "Is this text repetitive?"}}
-                }))
-                .await
-                .map(|_| Some(h2o))
-            }
-        }
-    };
-    match tokio::time::timeout(PROBE_TIMEOUT, request).await {
-        Ok(Ok(h2o)) => Ok(h2o),
-        Ok(Err(error)) => Err(error.message),
-        Err(_) => Err(format!("no answer within {}s", PROBE_TIMEOUT.as_secs())),
     }
 }

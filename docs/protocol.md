@@ -35,10 +35,10 @@ routes for development. In `keys` mode, miner routes require a token from
 
 ## Connection
 
-1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models. Miners reject unknown catalog fields, so the pool leaves out what a miner did not ask for: offload profiles unless `?features=offload`, and `h2o` models (backend `llama-server-h2o`, profile field `parallel_slots`) unless `?features=offload,h2o`. CPU profiles are sent only with `?features=offload,h2o,cpu`; v0.2.6 miners receive `h2o-q8` with CUDA profiles and a revision computed from that filtered view. The pool accepts both revisions in miner hello. The `h2o` feature names the backend, not a model id: the only served model is `h2o-q8`, and `h2o` is unknown.
+1. `GET /miner/v1/catalog` returns `{"catalog_revision", "catalog"}`. The miner uses it to choose, download and start models. Miners reject unknown catalog fields, so the pool leaves out what a miner did not ask for: offload profiles unless `?features=offload`, and `h2o` models (backend `llama-server-h2o`, profile field `parallel_slots`) unless `?features=offload,h2o`. CPU profiles are sent only with `?features=offload,h2o,cpu`; v0.2.6 miners receive `h2o-q8` with CUDA profiles and a revision computed from that filtered view. The pool accepts both revisions in miner hello. The `h2o` feature names the backend, not a model id: the default decision model is `h2o-q8`, and `h2o` is unknown. The opt-in Qwen chat entry requires `chat-json-v1` (new miners send `offload,h2o,cpu,chat-json-v1`). Older views omit all extended chat fields and entries.
 2. `GET /miner/v1/connect` upgrades to WebSocket with subprotocol `ai-pool.v1`. In `keys` mode with `POOL_MINER_AUTH=token`, both miner routes need `Authorization: Bearer <miner token>` from `POOL_MINER_TOKENS`; `POOL_MINER_AUTH=open` accepts anonymous miners. Frames are limited to 4 MiB.
 3. The miner sends `hello` within 10 s: protocol version, installation `miner_id`, version, catalog revision and hardware. The pool answers `welcome {session_id, heartbeat_seconds}`, or `error` and closes (e.g. `protocol_mismatch`).
-4. The miner sends `capacity`, a full snapshot of devices (`slots` concurrent inferences each) and loaded models (`model`, `model_revision`, `profile`, `device`, `context_tokens`). The pool ignores entries whose revision or profile does not match its catalog. A new snapshot replaces the old one.
+4. The miner sends `capacity`, a full snapshot of devices (`slots` concurrent inferences each) and loaded models (`model`, `model_revision`, `profile`, `device`, `context_tokens`, optional `runtime`). Extended chat entries require a complete matching runtime descriptor. The pool ignores entries whose revision or profile does not match its catalog. A new snapshot replaces the old one.
 5. The miner sends `heartbeat {active_attempts}` every `heartbeat_seconds`. After three intervals of silence the pool drops the miner. The pool pings every 15 s.
 
 On reconnect, a miner starts a fresh session. Attempts from the old session are never resumed, and their late results are discarded.
@@ -47,12 +47,12 @@ On reconnect, a miner starts a fresh session. Attempts from the old session are 
 
 Before a request is queued, the pool asks one miner serving the model to count its input exactly:
 
-- pool → `count_tokens {count_id, model, model_revision, operation, payload}`
-- miner → `count_result {count_id, input_tokens}` or `count_error {count_id, code, message}`
+- pool → `count_tokens {count_id, model, model_revision, operation, payload, runtime_fingerprint?, timeout_ms}`
+- miner → `count_result {count_id, input_tokens, loaded?}` or `count_error {count_id, code, message}`
 
 Clef counts through `clef-token-count`, which runs the pinned llama-server's own prompt path. Chat models count through the runtime's `/v1/chat/completions/input_tokens`. H2O renders each question's prompt like refactor-tool and tokenizes it with its own llama-server (`/tokenize`); its count is the longest single question prompt, since questions run one after another. Counting uses no device slot.
 
-The required context is the input tokens for systemone. For H2O a profile's `context_tokens` is an inclusive prompt limit, so a prompt of exactly that many tokens fits. A longer prompt is `context_length_exceeded`; a malformed question is `invalid_request`. For chat it is input + reserved output (`max_tokens`, default 512) + 1. The pool routes to the fitting device with the **earliest predicted finish**:
+The required context is the input tokens for systemone. For H2O a profile's `context_tokens` is an inclusive prompt limit, so a prompt of exactly that many tokens fits. A longer prompt is `context_length_exceeded`; a malformed question is `invalid_request`. For chat it is input + reserved output (`max_tokens`, catalog-defined default) + 1. The pool routes to the fitting device with the **earliest predicted finish**:
 `(outstanding work tokens + this job's work tokens) / tokens_per_second`.
 Work is `max(1, input_tokens × question_count)` (chat has one question). For H2O,
 every question runs a full forward, although `input_tokens` remains the longest
@@ -338,3 +338,88 @@ OpenAI-shaped: `{"error": {"message", "type", "param", "code", "request_id", "re
 | 503 | `no_miner_available` | no miner serves the model |
 | 503 | `pool_overloaded`, `queue_timeout`, `count_timeout` | capacity is temporarily exhausted |
 | 504 | `inference_timeout` | the request deadline passed |
+
+## Schema chat and exact counts (chat-json-v1, miner 0.2.8)
+
+The catalog adds opt-in `qwen3.8-27b-ud-q3-k-xl`, with immutable HF artifact
+provenance and an estimated, unqualified `cuda-8192` profile. H2O remains the default.
+`GET /v1/models/{id}` includes artifact/runtime expectations, execution settings,
+model revision and `available_runtimes`, separate from catalog maximum context.
+Zero loaded miners means no live capability or counting qualification.
+
+Both chat endpoints accept the same normalized request. A baseline completion is:
+
+```json
+{
+  "model": "qwen3.8-27b-ud-q3-k-xl",
+  "messages": [{"role": "user", "content": "Return the next JSON action."}],
+  "response_format": {"type": "json_schema", "json_schema": {
+    "name": "project_map_action", "strict": true,
+    "schema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["finish"]}}, "required": ["action"], "additionalProperties": false}
+  }},
+  "chat_template_kwargs": {"enable_thinking": false, "preserve_thinking": false},
+  "max_tokens": 1536, "stream": false,
+  "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0,
+  "presence_penalty": 1.5, "repeat_penalty": 1.0, "seed": 42,
+  "min_context_tokens": 8192,
+  "pool": {"runtime_fingerprint": "sha256:<64 lowercase hex digits>", "max_attempts": 1}
+}
+```
+
+Obtain the actual fingerprint from a live descriptor. The example placeholder is
+not a valid pin. `pool` and `min_context_tokens` are stripped before forwarding.
+Native tools/functions are unsupported. `response_format` permits `text`,
+`json_object` with an optional schema object, and the nested `json_schema` wrapper;
+schemas are preserved verbatim for the pinned runtime to accept or reject.
+Template kwargs allow at most 16 scalar fields with bounded names/string values;
+`enable_thinking` and `preserve_thinking` must be booleans. Unsupported fields and
+bad sampler ranges fail explicitly.
+
+`POST /v1/chat/completions/input_tokens` formats and tokenizes on the loaded
+llama-server through its identical upstream route, returning:
+
+```json
+{"object":"response.input_tokens","input_tokens":123,"model":"qwen3.8-27b-ud-q3-k-xl","model_revision":"sha256:…","profile":"cuda-8192","context_tokens":8192,"runtime_fingerprint":"sha256:…","runtime_instance_id":"…"}
+```
+
+The route reserves admission, enforces request/count bounds and deadlines,
+generates no completion, and changes no inference statistics. A disconnected HTTP
+request cancels pending count work (`cancel_count {count_id}`); miners bound queued
+and active counters, aborting their runtime HTTP future on cancellation. Counts
+and completions use identical normalized bodies, including schema/template kwargs,
+samplers, output settings, generation prefix and special-token defaults. There is
+no estimate path. `input_tokens` conversion rejects numeric overflow.
+
+Routing pins only the runtime fingerprint: model/profile, pinned artifact/build,
+tokenizer/template hashes, effective generation settings and explicit launch
+configuration. Restarts get fresh instance UUIDs without changing a configuration's
+fingerprint. Identical fingerprints can run on different miners or instances;
+instance IDs are reported, never accepted as routing controls. A missing or changed
+fingerprint is HTTP 409 `revision_mismatch`; preflight and recount are then required.
+`pool.max_attempts` accepts 1 or 2; omitted retains the legacy two-attempt maximum.
+Set 1 when the connector owns retries. Dispatch rejections before inference do not
+consume an actual completion attempt.
+
+Non-streaming completion and count headers include `x-request-id`,
+`x-model-revision`, `x-model-profile`, `x-runtime-fingerprint` and
+`x-runtime-instance-id` when available. `x-completion-attempts` reports actual
+completion attempts (zero for counting); terminal job errors include that header.
+The runtime instance on a completion is the child that actually answered.
+Assistant content, finish reasons and usage remain unchanged. Runtime JSON bodies
+are capped at 1 MiB; WebSocket messages retain the 4 MiB cap. Explicit OOM and
+revision errors are terminal; native-tool and schema/request failures are not retried.
+
+Descriptors attest only to miner-reported configuration and local downloader
+SHA256 verification, not remote hardware/weight attestation. Tokenizer identity
+is the exact GGUF plus llama.cpp commit; template hashes and build/context/slot
+metadata come from authenticated local `/props`. Launch settings are explicit,
+including Jinja, f16 cache, one slot, batch/microbatch 512, no automatic fit,
+context shift, vision/projector or speculative/MTP model. Inherited `LLAMA_ARG_*`
+and `GGML_*` overrides are removed for this fixed profile, preventing implicit
+managed-memory fallback. Actual tensor placement and peak memory remain unmeasured.
+
+The connector applies its own application admission exactly once:
+formatted input + 1536 generated + 256 reserve <= 8192 (at most 6400 input).
+The pool retains its infrastructure boundary check; callers add no independent
+application token caps. Source compatibility and offline builds do not qualify
+live Qwen schema decoding, count-versus-usage equality, memory fit or throughput.

@@ -98,6 +98,7 @@ async fn serve(state: AppState, label: String, socket: WebSocket) {
     let known = [
         &state.catalog_revision,
         &state.h2o_catalog_revision,
+        &state.cpu_catalog_revision,
         &state.offload_catalog_revision,
         &state.legacy_catalog_revision,
     ];

@@ -1,5 +1,8 @@
 //! Client-facing HTTP API.
 
+pub mod chat_tokens;
+mod request;
+
 use std::{collections::HashMap, convert::Infallible};
 
 use axum::{
@@ -13,14 +16,14 @@ use axum::{
     },
 };
 use futures_util::stream;
-use pool_protocol::{Model, Operation, requests};
-use serde_json::{Map, Value, json};
+use pool_protocol::{Model, Operation};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::{
     AppState,
     error::ApiError,
-    scheduler::{CountRequest, JobEvent, JobGuard, ModelAvailability, NewJob},
+    scheduler::{JobEvent, JobGuard, ModelAvailability, NewJob},
 };
 
 /// Upper bound for reading a request body.
@@ -57,7 +60,7 @@ pub async fn list_models(State(state): State<AppState>) -> Result<Json<Value>, A
         .catalog
         .models
         .iter()
-        .map(|model| model_entry(model, snapshot.models.get(&model.id).cloned().unwrap_or_default()))
+        .map(|model| model_entry(&state.catalog, model, snapshot.models.get(&model.id).cloned().unwrap_or_default()))
         .collect();
     Ok(Json(json!({ "object": "list", "data": data })))
 }
@@ -65,10 +68,10 @@ pub async fn list_models(State(state): State<AppState>) -> Result<Json<Value>, A
 pub async fn get_model(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
     let model = state.catalog.model(&id).ok_or_else(|| ApiError::model_not_found(&id))?;
     let snapshot = state.scheduler.snapshot().await;
-    Ok(Json(model_entry(model, snapshot.models.get(&id).cloned().unwrap_or_default())))
+    Ok(Json(model_entry(&state.catalog, model, snapshot.models.get(&id).cloned().unwrap_or_default())))
 }
 
-fn model_entry(model: &Model, availability: ModelAvailability) -> Value {
+fn model_entry(catalog: &pool_protocol::Catalog, model: &Model, availability: ModelAvailability) -> Value {
     json!({
         "id": model.id,
         "object": "model",
@@ -77,6 +80,13 @@ fn model_entry(model: &Model, availability: ModelAvailability) -> Value {
         "owned_by": "ai-pool",
         "pool": {
             "description": model.description,
+            "model_revision": catalog.model_revision(model),
+            "artifact": model.artifact,
+            "runtime": catalog.runtime(&model.runtime),
+            "execution": model.execution,
+            "profiles": model.profiles,
+            "capability_contract": if model.execution.chat_json { Some(pool_protocol::runtime::CHAT_JSON_CONTRACT) } else { None },
+            "available_runtimes": availability.available_runtimes,
             "capabilities": [model.capability()],
             "streaming": model.backend.streaming(),
             "catalog_max_context_tokens": model.max_context_tokens(),
@@ -105,8 +115,21 @@ pub async fn miner_catalog(
 ) -> Result<Json<Value>, ApiError> {
     state.auth.miner(&headers)?;
     let wants = |feature: &str| query.get("features").is_some_and(|f| f.split(',').any(|f| f == feature));
+    if wants("chat-json-v1") {
+        let mut catalog = (*state.catalog).clone();
+        catalog.models.retain(|model| wants("h2o") || model.backend != pool_protocol::Backend::LlamaServerH2o);
+        for model in &mut catalog.models {
+            model.profiles.retain(|profile| {
+                (wants("cpu") || profile.accelerator != pool_protocol::Accelerator::Cpu)
+                    && (wants("offload") || !profile.offloaded())
+            });
+        }
+        catalog.models.retain(|model| !model.profiles.is_empty());
+        catalog.default_models.retain(|id| catalog.models.iter().any(|model| &model.id == id));
+        return Ok(Json(json!({ "catalog_revision": catalog.revision(), "catalog": catalog })));
+    }
     let (catalog, revision) = match (wants("offload"), wants("h2o"), wants("cpu")) {
-        (_, true, true) => (&state.catalog, &state.catalog_revision),
+        (_, true, true) => (&state.cpu_catalog, &state.cpu_catalog_revision),
         (_, true, false) => (&state.h2o_catalog, &state.h2o_catalog_revision),
         (true, false, _) => (&state.offload_catalog, &state.offload_catalog_revision),
         (false, false, _) => (&state.legacy_catalog, &state.legacy_catalog_revision),
@@ -130,52 +153,12 @@ pub async fn chat_completions(State(state): State<AppState>, body: Body) -> Resp
 }
 
 async fn infer(state: AppState, body: Body, operation: Operation) -> Result<Response, ApiError> {
-    let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
+    let prepared = request::prepare(&state, body, operation).await?;
+    let counted = request::count(&state, &prepared).await?;
+    let request::Prepared { request_id, model_id, model_revision, request, max_context, reservation } = prepared;
     let tag = |error: ApiError| error.with_request_id(&request_id);
-
-    // Every inference request shares admission limits and an operational label.
-    let client = "public".to_owned();
-    // Refuse before reading, parsing or counting anything; the reservation is
-    // released when this function returns or is dropped, or moves into the job guard.
-    let reservation = state.scheduler.reserve(&client).map_err(tag)?;
-    // per-model limits are checked after parsing; this bounds the read itself
-    let body = axum::body::to_bytes(body, MAX_BODY_BYTES).await.map_err(|error| {
-        tag(ApiError::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "payload_too_large",
-            format!("the request body could not be read (at most {MAX_BODY_BYTES} bytes): {error}"),
-        ))
-    })?;
-    let fields: Map<String, Value> = serde_json::from_slice(&body).map_err(|error| {
-        tag(ApiError::bad_request("invalid_request", format!("body must be a JSON object: {error}")))
-    })?;
-    let model_id = match fields.get("model") {
-        Some(Value::String(id)) => id.clone(),
-        _ => return Err(tag(ApiError::bad_request("invalid_request", "\"model\" is required").param("model"))),
-    };
-    let model = state.catalog.model(&model_id).ok_or_else(|| tag(ApiError::model_not_found(&model_id)))?;
-    if body.len() > model.limits.request_bytes {
-        return Err(tag(ApiError::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "payload_too_large",
-            format!("requests to {model_id:?} are limited to {} bytes", model.limits.request_bytes),
-        )));
-    }
-    let request = requests::validate(operation, model, fields).map_err(|error| tag(error.into()))?;
-    let model_revision = state.catalog.model_revision(model);
-
-    let input_tokens = state
-        .scheduler
-        .count(CountRequest {
-            model: model_id.clone(),
-            model_revision: model_revision.clone(),
-            operation,
-            payload: request.count_payload.clone(),
-        })
-        .await
-        .map_err(tag)?;
+    let input_tokens = counted.input_tokens;
     let required_context = request.required_context(input_tokens);
-    let max_context = model.max_context_tokens();
     if required_context > max_context {
         let reserved = match operation {
             Operation::Systemone => String::new(),
@@ -192,7 +175,7 @@ async fn infer(state: AppState, body: Body, operation: Operation) -> Result<Resp
     let stream = request.stream;
     let job = NewJob {
         id: request_id.clone(),
-        client,
+        client: "public".into(),
         model: model_id,
         model_revision: model_revision.clone(),
         request,
@@ -200,8 +183,8 @@ async fn infer(state: AppState, body: Body, operation: Operation) -> Result<Resp
         required_context,
     };
     let buffer = if stream { state.config.stream_buffer_events } else { 1 };
-    let mut events = state.scheduler.submit(job, buffer).await.map_err(tag)?;
     let mut guard = JobGuard::new(state.scheduler.clone(), &request_id, reservation);
+    let mut events = state.scheduler.submit(job, buffer).await.map_err(tag)?;
 
     let mut headers = HeaderMap::new();
     headers.insert("x-request-id", header(&request_id));
@@ -209,9 +192,11 @@ async fn infer(state: AppState, body: Body, operation: Operation) -> Result<Resp
 
     if !stream {
         return match events.recv().await {
-            Some(JobEvent::Result { body, profile }) => {
+            Some(JobEvent::Result { body, profile, runtime, attempts }) => {
                 guard.finish();
                 headers.insert("x-model-profile", header(&profile));
+                runtime_headers(&mut headers, runtime.as_deref());
+                headers.insert("x-completion-attempts", HeaderValue::from(attempts));
                 Ok((headers, Json(body)).into_response())
             }
             Some(JobEvent::Failed(error)) => {
@@ -276,4 +261,11 @@ impl Relay {
 
 fn header(value: &str) -> HeaderValue {
     HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static("invalid"))
+}
+
+fn runtime_headers(headers: &mut HeaderMap, runtime: Option<&pool_protocol::runtime::RuntimeDescriptor>) {
+    if let Some(runtime) = runtime {
+        headers.insert("x-runtime-fingerprint", header(&runtime.fingerprint));
+        headers.insert("x-runtime-instance-id", header(&runtime.instance_id));
+    }
 }

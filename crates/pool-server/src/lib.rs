@@ -28,6 +28,9 @@ pub struct AppState {
     pub catalog_revision: Arc<str>,
     /// The catalog without CPU profiles, for miners through 0.2.6.
     pub h2o_catalog: Arc<Catalog>,
+    /// No extended chat entries, for miners through 0.2.7.
+    pub cpu_catalog: Arc<Catalog>,
+    pub cpu_catalog_revision: Arc<str>,
     pub h2o_catalog_revision: Arc<str>,
     /// The catalog without h2o models, for miners 0.1.3 that know offload but not h2o.
     pub offload_catalog: Arc<Catalog>,
@@ -45,7 +48,10 @@ pub struct AppState {
 impl AppState {
     /// Starts the scheduler task; call inside a Tokio runtime.
     pub fn new(config: Config, catalog: Catalog) -> Self {
-        let mut h2o = catalog.clone();
+        let mut cpu = catalog.clone();
+        cpu.models.retain(|model| !model.execution.chat_json);
+        cpu.default_models.retain(|id| cpu.models.iter().any(|model| &model.id == id));
+        let mut h2o = cpu.clone();
         for model in &mut h2o.models {
             model.profiles.retain(|profile| profile.accelerator != Accelerator::Cpu);
         }
@@ -62,6 +68,8 @@ impl AppState {
         let stats_publisher = stats_stream::StatsPublisher::spawn(scheduler.stats_receiver(), config.max_stats_streams);
         Self {
             catalog_revision: catalog.revision().into(),
+            cpu_catalog_revision: cpu.revision().into(),
+            cpu_catalog: Arc::new(cpu),
             h2o_catalog_revision: h2o.revision().into(),
             h2o_catalog: Arc::new(h2o),
             offload_catalog_revision: offload.revision().into(),
@@ -90,6 +98,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/models/{id}", get(api::get_model))
         .route("/v1/systemone", post(api::systemone))
         .route("/v1/chat/completions", post(api::chat_completions))
+        .route("/v1/chat/completions/input_tokens", post(api::chat_tokens::input_tokens))
         .route("/admin/v1/status", get(api::admin_status))
         .route("/miner/v1/catalog", get(api::miner_catalog))
         .route("/miner/v1/connect", get(miners::connect))

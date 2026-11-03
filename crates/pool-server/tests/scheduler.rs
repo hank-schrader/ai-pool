@@ -141,6 +141,7 @@ async fn fake_miner(
                 profile: profile.to_string(),
                 device: device.into(),
                 context_tokens: model.profile(profile).unwrap().context_tokens,
+                runtime: None,
             }
         })
         .collect();
@@ -159,7 +160,7 @@ async fn fake_miner(
             match message {
                 PoolMessage::CountTokens { count_id, payload, .. } => {
                     let input_tokens = requested_tokens(&payload);
-                    sink.send(send(MinerMessage::CountResult { count_id, input_tokens })).await.unwrap();
+                    sink.send(send(MinerMessage::CountResult { count_id, input_tokens, loaded: None })).await.unwrap();
                 }
                 PoolMessage::Job { attempt_id, operation, .. } => {
                     sink.send(send(MinerMessage::Accepted { attempt_id: attempt_id.clone() })).await.unwrap();
@@ -185,7 +186,7 @@ async fn fake_miner(
                                     "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
                                 }),
                             };
-                            sink.send(send(MinerMessage::Result { attempt_id, body })).await.unwrap();
+                            sink.send(send(MinerMessage::Result { attempt_id, body, runtime: None })).await.unwrap();
                         }
                         Behavior::Stream { chunks, then_drop } => {
                             sink.send(send(MinerMessage::StreamStart { attempt_id: attempt_id.clone() }))

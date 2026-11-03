@@ -24,192 +24,10 @@ pub struct Catalog {
     pub models: Vec<Model>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Runtime {
-    /// Referenced by `Model::runtime`; resolved by the miner's runtime manifest.
-    pub id: String,
-    /// Full 40-character llama.cpp commit the runtime must report.
-    pub llama_cpp_commit: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Model {
-    /// API model name clients send in `model`.
-    pub id: String,
-    pub description: String,
-    pub backend: Backend,
-    pub runtime: String,
-    pub weights: Weights,
-    pub limits: Limits,
-    #[serde(default)]
-    pub execution: Execution,
-    pub profiles: Vec<Profile>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Backend {
-    /// Decision model on `/v1/systemone`; prompt must fit one microbatch.
-    LlamaServerSystemone,
-    /// Text chat on `/v1/chat/completions`.
-    LlamaServerChat,
-    /// H2O-Lightning decision model on `/v1/systemone`: one label-only forward
-    /// per question, answered exactly like refactor-tool's local engine.
-    #[serde(rename = "llama-server-h2o")]
-    LlamaServerH2o,
-}
-
-impl Backend {
-    pub fn capability(self) -> Capability {
-        match self {
-            Backend::LlamaServerSystemone | Backend::LlamaServerH2o => Capability::Systemone,
-            Backend::LlamaServerChat => Capability::ChatCompletions,
-        }
-    }
-
-    pub fn streaming(self) -> bool {
-        matches!(self, Backend::LlamaServerChat)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Capability {
-    Systemone,
-    ChatCompletions,
-}
-
-impl fmt::Display for Capability {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Capability::Systemone => "systemone",
-            Capability::ChatCompletions => "chat_completions",
-        })
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Weights {
-    pub filename: String,
-    pub url: String,
-    pub size_bytes: u64,
-    pub sha256: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Limits {
-    pub request_bytes: usize,
-    /// systemone only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_questions: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_choice_options: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_score_levels: Option<usize>,
-    /// chat only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_output_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<u32>,
-}
-
-/// Fixed launch settings shared by every profile of a model. Context-dependent
-/// settings live on the profile. Only allowlisted options exist; the catalog can
-/// never inject arbitrary runtime arguments.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Execution {
-    #[serde(default = "default_gpu_layers")]
-    pub gpu_layers: u32,
-    /// Chat only; systemone always uses batch = microbatch = context.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub batch_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub microbatch_tokens: Option<u32>,
-}
-
-fn default_gpu_layers() -> u32 {
-    99
-}
-
-impl Default for Execution {
-    fn default() -> Self {
-        Self { gpu_layers: default_gpu_layers(), batch_tokens: None, microbatch_tokens: None }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Accelerator {
-    Cuda,
-    Metal,
-    Cpu,
-}
-
-impl fmt::Display for Accelerator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Accelerator::Cuda => "cuda",
-            Accelerator::Metal => "metal",
-            Accelerator::Cpu => "cpu",
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemorySource {
-    /// Peak measured during qualification, plus headroom.
-    Measured,
-    /// Not yet measured on this accelerator.
-    Estimate,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Profile {
-    pub id: String,
-    pub accelerator: Accelerator,
-    pub context_tokens: u32,
-    /// Accelerator memory one resident process needs at this context:
-    /// dedicated VRAM for CUDA, unified memory for Metal, system RAM for CPU.
-    pub memory_mib: u64,
-    pub memory_source: MemorySource,
-    /// Offload profiles only: layers kept on the GPU; the rest of the weights
-    /// stay in system RAM. Unset means every layer is on the accelerator;
-    /// CPU profiles always keep all weights in system RAM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gpu_layers: Option<u32>,
-    /// Offload profiles only: system RAM the weights left on the host need.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host_memory_mib: Option<u64>,
-    /// llama-server `--parallel` slots, each with `context_tokens` of its own
-    /// (H2O only; unset means 1). Slots share the weights and run that many
-    /// questions at once; the miner may queue a few more in front of them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parallel_slots: Option<u32>,
-}
-
-impl Profile {
-    /// llama-server slots this profile starts.
-    pub fn slots(&self) -> u32 {
-        self.parallel_slots.unwrap_or(1)
-    }
-
-    pub fn offloaded(&self) -> bool {
-        self.gpu_layers.is_some()
-    }
-
-    /// Ordering of preference, best last: everything on the GPU beats any
-    /// offload, then more context, then more layers on the GPU, then more slots.
-    pub fn preference(&self) -> (bool, u32, u32, u32) {
-        (!self.offloaded(), self.context_tokens, self.gpu_layers.unwrap_or(u32::MAX), self.slots())
-    }
-}
+pub use types::*;
+mod types;
+mod validation;
+use validation::{is_hex, is_identifier};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -254,8 +72,14 @@ impl Catalog {
     pub fn model_revision(&self, model: &Model) -> String {
         let runtime = self.runtime(&model.runtime).map(|r| r.llama_cpp_commit.as_str()).unwrap_or("");
         let backend = serde_json::to_string(&model.backend).expect("backend serializes");
-        let identity =
+        let mut identity =
             format!("{}\n{}\n{}\n{}\n{}", model.id, model.weights.sha256, model.weights.size_bytes, runtime, backend);
+        if model.execution.chat_json || model.artifact.is_some() {
+            identity.push_str(&crate::runtime::digest(&serde_json::json!({
+                "artifact": model.artifact, "execution": model.execution,
+                "contract": crate::runtime::CHAT_JSON_CONTRACT,
+            })));
+        }
         format!("sha256:{}", hex(&Sha256::digest(identity.as_bytes())))
     }
 
@@ -292,6 +116,7 @@ impl Catalog {
                 problems.push(format!("{at}: runtime {:?} is not defined", model.runtime));
             }
             model.weights.problems(&at, &mut problems);
+            model.artifact_problems(&at, &mut problems);
             model.limits_problems(&at, &mut problems);
             model.profile_problems(&at, &mut problems);
         }
@@ -308,177 +133,6 @@ impl Catalog {
     }
 }
 
-impl Weights {
-    fn problems(&self, at: &str, problems: &mut Vec<String>) {
-        if self.filename.is_empty()
-            || self.filename.contains(['/', '\\'])
-            || self.filename.starts_with('.')
-            || !self.filename.ends_with(".gguf")
-        {
-            problems.push(format!("{at}: weights.filename must be a plain *.gguf file name"));
-        }
-        let local_http =
-            ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|prefix| self.url.starts_with(prefix));
-        if !self.url.starts_with("https://") && !local_http {
-            problems.push(format!("{at}: weights.url must use https (plain http only for localhost)"));
-        }
-        if self.size_bytes == 0 {
-            problems.push(format!("{at}: weights.size_bytes must be positive"));
-        }
-        if !is_hex(&self.sha256, 64) {
-            problems.push(format!("{at}: weights.sha256 must be 64 lowercase hexadecimal characters"));
-        }
-    }
-}
-
-impl Model {
-    pub fn capability(&self) -> Capability {
-        self.backend.capability()
-    }
-
-    pub fn max_context_tokens(&self) -> u32 {
-        self.profiles.iter().map(|profile| profile.context_tokens).max().unwrap_or(0)
-    }
-
-    pub fn profile(&self, id: &str) -> Option<&Profile> {
-        self.profiles.iter().find(|profile| profile.id == id)
-    }
-
-    /// Profiles for one accelerator, least preferred first (see [`Profile::preference`]).
-    pub fn profiles_for(&self, accelerator: Accelerator) -> Vec<&Profile> {
-        let mut profiles: Vec<_> = self.profiles.iter().filter(|p| p.accelerator == accelerator).collect();
-        profiles.sort_by_key(|profile| profile.preference());
-        profiles
-    }
-
-    fn limits_problems(&self, at: &str, problems: &mut Vec<String>) {
-        let limits = &self.limits;
-        if limits.request_bytes == 0 || limits.request_bytes > 16 << 20 {
-            problems.push(format!("{at}: limits.request_bytes must be between 1 and 16 MiB"));
-        }
-        let systemone = [limits.max_questions, limits.max_choice_options, limits.max_score_levels];
-        let chat = [limits.default_output_tokens, limits.max_output_tokens];
-        match self.backend {
-            Backend::LlamaServerH2o => {
-                if systemone.iter().any(Option::is_none) || chat.iter().any(Option::is_some) {
-                    problems.push(format!(
-                        "{at}: h2o limits need max_questions, max_choice_options and max_score_levels only"
-                    ));
-                    return;
-                }
-                if !(1..=255).contains(&limits.max_questions.unwrap()) {
-                    problems.push(format!("{at}: limits.max_questions must be 1-255"));
-                }
-                // one label per option, A-P
-                if !(1..=16).contains(&limits.max_choice_options.unwrap()) {
-                    problems.push(format!("{at}: limits.max_choice_options must be 1-16 (labels A-P)"));
-                }
-                if !(1..=16).contains(&limits.max_score_levels.unwrap()) {
-                    problems.push(format!("{at}: limits.max_score_levels must be 1-16 (labels A-P)"));
-                }
-            }
-            Backend::LlamaServerSystemone => {
-                if systemone.iter().any(Option::is_none) || chat.iter().any(Option::is_some) {
-                    problems.push(format!(
-                        "{at}: systemone limits need max_questions, max_choice_options and max_score_levels only"
-                    ));
-                    return;
-                }
-                if !(1..=255).contains(&limits.max_questions.unwrap()) {
-                    problems.push(format!("{at}: limits.max_questions must be 1-255"));
-                }
-                if !(2..=255).contains(&limits.max_choice_options.unwrap()) {
-                    problems.push(format!("{at}: limits.max_choice_options must be 2-255"));
-                }
-                if !(2..=10).contains(&limits.max_score_levels.unwrap()) {
-                    problems.push(format!("{at}: limits.max_score_levels must be 2-10"));
-                }
-            }
-            Backend::LlamaServerChat => {
-                if chat.iter().any(Option::is_none) || systemone.iter().any(Option::is_some) {
-                    problems.push(format!("{at}: chat limits need default_output_tokens and max_output_tokens only"));
-                    return;
-                }
-                let (default, max) = (limits.default_output_tokens.unwrap(), limits.max_output_tokens.unwrap());
-                if default == 0 || default > max {
-                    problems.push(format!("{at}: limits need 0 < default_output_tokens <= max_output_tokens"));
-                }
-            }
-        }
-    }
-
-    fn profile_problems(&self, at: &str, problems: &mut Vec<String>) {
-        let execution = &self.execution;
-        match self.backend {
-            Backend::LlamaServerSystemone | Backend::LlamaServerH2o => {
-                if execution.batch_tokens.is_some() || execution.microbatch_tokens.is_some() {
-                    problems.push(format!("{at}: systemone models use batch = microbatch = context; remove them"));
-                }
-            }
-            Backend::LlamaServerChat => {
-                let (batch, micro) =
-                    (execution.batch_tokens.unwrap_or(512), execution.microbatch_tokens.unwrap_or(512));
-                if batch == 0 || micro == 0 || micro > batch {
-                    problems.push(format!("{at}: execution needs 0 < microbatch_tokens <= batch_tokens"));
-                }
-            }
-        }
-        if self.profiles.is_empty() {
-            problems.push(format!("{at}: needs at least one profile"));
-        }
-        let mut ids = HashSet::new();
-        for profile in &self.profiles {
-            if !is_identifier(&profile.id) {
-                problems.push(format!("{at}: profile id {:?} must match [a-z0-9][a-z0-9._-]{{0,63}}", profile.id));
-            }
-            if !ids.insert(profile.id.as_str()) {
-                problems.push(format!("{at}: profile {:?} is defined twice", profile.id));
-            }
-            if !(512..=262_144).contains(&profile.context_tokens) {
-                problems.push(format!("{at}: profile {:?}: context_tokens must be 512-262144", profile.id));
-            }
-            if profile.memory_mib == 0 {
-                problems.push(format!("{at}: profile {:?}: memory_mib must be positive", profile.id));
-            }
-            match profile.parallel_slots {
-                None => {}
-                Some(1..=8) if self.backend == Backend::LlamaServerH2o => {}
-                Some(_) => problems.push(format!(
-                    "{at}: profile {:?}: parallel_slots must be 1-8 and is only supported by h2o models",
-                    profile.id
-                )),
-            }
-            match (profile.gpu_layers, profile.host_memory_mib) {
-                (None, None) => {}
-                (Some(_), Some(host)) if host > 0 && profile.accelerator == Accelerator::Cuda => {}
-                (Some(_), Some(_)) if profile.accelerator != Accelerator::Cuda => problems
-                    .push(format!("{at}: profile {:?}: separate host memory is only supported on cuda", profile.id)),
-                _ => problems.push(format!(
-                    "{at}: profile {:?}: offload profiles need both gpu_layers and a positive host_memory_mib",
-                    profile.id
-                )),
-            }
-        }
-        for accelerator in [Accelerator::Cuda, Accelerator::Metal, Accelerator::Cpu] {
-            let keys: Vec<_> = self.profiles_for(accelerator).iter().map(|p| p.preference()).collect();
-            if keys.windows(2).any(|pair| pair[0] == pair[1]) {
-                problems.push(format!("{at}: two {accelerator} profiles have the same context, GPU layers and slots"));
-            }
-        }
-    }
-}
-
-fn is_identifier(value: &str) -> bool {
-    let mut chars = value.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
-        && value.len() <= 64
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
-}
-
-fn is_hex(value: &str, len: usize) -> bool {
-    value.len() == len && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -492,10 +146,10 @@ mod tests {
     const ALL_MODELS: &str = include_str!("../../../tests/fixtures/all-models.json");
 
     #[test]
-    fn shipped_catalog_serves_only_h2o_q8() {
+    fn shipped_catalog_serves_h2o_and_opt_in_chat() {
         let catalog = Catalog::parse(SHIPPED).expect("config/models.json is valid");
         let ids: Vec<_> = catalog.models.iter().map(|model| model.id.as_str()).collect();
-        assert_eq!(ids, ["h2o-q8"]);
+        assert_eq!(ids, ["h2o-q8", "qwen3.8-27b-ud-q3-k-xl"]);
         assert!(catalog.model("h2o").is_none());
         assert_eq!(catalog.default_models, ["h2o-q8"]);
         let all = Catalog::parse(ALL_MODELS).expect("tests/fixtures/all-models.json is valid");

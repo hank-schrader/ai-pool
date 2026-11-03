@@ -1,6 +1,11 @@
 //! The miner's WebSocket session with the pool: registration, capacity,
 //! heartbeats, token counts and jobs. Reconnects forever until shutdown.
 
+mod counts;
+mod execute;
+mod session;
+use execute::execute;
+
 use std::{
     collections::HashMap,
     sync::{
@@ -56,6 +61,7 @@ pub struct Miner {
     running: Arc<AtomicUsize>,
     counts: Arc<Semaphore>,
     active: Mutex<HashMap<String, JoinHandle<()>>>,
+    active_counts: Mutex<HashMap<String, JoinHandle<()>>>,
     out: Mutex<Option<mpsc::Sender<MinerMessage>>>,
 }
 
@@ -88,6 +94,7 @@ impl Miner {
             running: Arc::new(AtomicUsize::new(0)),
             counts: Arc::new(Semaphore::new(COUNT_CONCURRENCY)),
             active: Mutex::new(HashMap::new()),
+            active_counts: Mutex::new(HashMap::new()),
             out: Mutex::new(None),
         })
     }
@@ -117,137 +124,6 @@ impl Miner {
             tracing::warn!("cancelling {left} job(s) still running after {}s", grace.as_secs());
         }
         self.shutdown.cancel();
-    }
-
-    /// Connects, serves, and reconnects with backoff until shutdown.
-    pub async fn run(self: Arc<Self>) {
-        let mut backoff = Duration::from_secs(1);
-        loop {
-            let started = Instant::now();
-            let end = self.clone().session().await;
-            *self.out.lock().unwrap() = None;
-            self.abort_all().await;
-            match end {
-                Ok(End::Shutdown) => return,
-                Ok(End::Lost(reason)) | Err(reason) => {
-                    if self.shutdown.is_cancelled() {
-                        return;
-                    }
-                    if started.elapsed() > Duration::from_secs(60) {
-                        backoff = Duration::from_secs(1);
-                    }
-                    let jitter = Duration::from_millis((uuid::Uuid::new_v4().as_u128() % 1000) as u64);
-                    tracing::warn!(
-                        "pool connection: {reason}; reconnecting in {:.1}s",
-                        (backoff + jitter).as_secs_f32()
-                    );
-                    tokio::select! {
-                        _ = tokio::time::sleep(backoff + jitter) => {}
-                        _ = self.shutdown.cancelled() => return,
-                    }
-                    backoff = (backoff * 2).min(Duration::from_secs(30));
-                }
-            }
-        }
-    }
-
-    async fn session(self: Arc<Self>) -> Result<End, String> {
-        let mut request = self.pool.connect_url().into_client_request().map_err(|error| error.to_string())?;
-        request.headers_mut().insert(header::SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(SUBPROTOCOL));
-        if let Some(token) = self.pool.token_value() {
-            let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| "invalid miner token")?;
-            request.headers_mut().insert(header::AUTHORIZATION, value);
-        }
-        let config = WebSocketConfig::default()
-            .max_message_size(Some(MAX_MESSAGE_BYTES))
-            .max_frame_size(Some(MAX_MESSAGE_BYTES));
-        let connect = tokio_tungstenite::connect_async_with_config(request, Some(config), true);
-        let (socket, _) = tokio::time::timeout(Duration::from_secs(15), connect)
-            .await
-            .map_err(|_| "connect timed out".to_string())?
-            .map_err(|error| format!("cannot connect to {}: {error}", self.pool.connect_url()))?;
-        let (mut sink, mut stream) = socket.split();
-
-        let hello = MinerMessage::Hello {
-            protocol_version: PROTOCOL_VERSION,
-            miner_id: self.miner_id.clone(),
-            miner_version: env!("CARGO_PKG_VERSION").into(),
-            catalog_revision: self.catalog_revision.clone(),
-            hardware: self.hardware.clone(),
-        };
-        sink.send(text(&hello)).await.map_err(|error| error.to_string())?;
-        let heartbeat_seconds = loop {
-            let frame = tokio::time::timeout(Duration::from_secs(15), stream.next())
-                .await
-                .map_err(|_| "no welcome from the pool".to_string())?
-                .ok_or("connection closed before welcome")?
-                .map_err(|error| error.to_string())?;
-            match frame {
-                Message::Text(body) => match serde_json::from_str::<PoolMessage>(&body) {
-                    Ok(PoolMessage::Welcome { session_id, heartbeat_seconds }) => {
-                        tracing::info!("connected to {} (session {session_id})", self.pool.url());
-                        break heartbeat_seconds.max(1);
-                    }
-                    Ok(PoolMessage::Error { code, message }) => {
-                        return Err(format!("pool refused the miner: {code}: {message}"));
-                    }
-                    _ => return Err(format!("unexpected first message: {body}")),
-                },
-                Message::Close(frame) => return Err(format!("pool closed the connection: {frame:?}")),
-                _ => {}
-            }
-        };
-
-        let (out, mut outbox) = mpsc::channel::<MinerMessage>(256);
-        *self.out.lock().unwrap() = Some(out.clone());
-        let writer = tokio::spawn(async move {
-            while let Some(message) = outbox.recv().await {
-                if sink.send(text(&message)).await.is_err() {
-                    break;
-                }
-            }
-            let _ = sink.close().await;
-        });
-
-        if self.draining.load(Ordering::SeqCst) {
-            let _ = out.send(MinerMessage::Draining).await;
-        }
-        let _ = out.send(self.capacity()).await;
-        let mut changes = self.changes.clone();
-        changes.mark_unchanged();
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_seconds));
-        heartbeat.tick().await;
-
-        let end = loop {
-            tokio::select! {
-                _ = self.shutdown.cancelled() => break Ok(End::Shutdown),
-                _ = heartbeat.tick() => {
-                    let active_attempts = self.active.lock().unwrap().keys().cloned().collect();
-                    if out.send(MinerMessage::Heartbeat { active_attempts }).await.is_err() {
-                        break Ok(End::Lost("writer stopped".into()));
-                    }
-                }
-                changed = changes.changed() => {
-                    if changed.is_ok() {
-                        let _ = out.send(self.capacity()).await;
-                    }
-                }
-                frame = stream.next() => match frame {
-                    None => break Ok(End::Lost("connection closed".into())),
-                    Some(Err(error)) => break Ok(End::Lost(error.to_string())),
-                    Some(Ok(Message::Text(body))) => match serde_json::from_str::<PoolMessage>(&body) {
-                        Ok(PoolMessage::Error { code, message }) => break Ok(End::Lost(format!("pool error {code}: {message}"))),
-                        Ok(message) => self.handle(message, &out).await,
-                        Err(error) => tracing::warn!("ignoring unknown pool message ({error}): {}", truncate(&body, 200)),
-                    },
-                    Some(Ok(Message::Close(frame))) => break Ok(End::Lost(format!("pool closed the connection: {frame:?}"))),
-                    Some(Ok(_)) => {}
-                },
-            }
-        };
-        drop(out);
-        writer.abort();
-        end
     }
 
     fn capacity(&self) -> MinerMessage {
@@ -283,28 +159,21 @@ impl Miner {
     async fn handle(self: &Arc<Self>, message: PoolMessage, out: &mpsc::Sender<MinerMessage>) {
         match message {
             PoolMessage::Welcome { .. } | PoolMessage::Error { .. } => {}
-            PoolMessage::CountTokens { count_id, model, model_revision, operation: _, payload } => {
-                let miner = self.clone();
-                let out = out.clone();
-                tokio::spawn(async move {
-                    let reply = match miner.hosted(&model) {
-                        Some(hosted) if hosted.revision == model_revision => {
-                            let _permit = miner.counts.acquire().await;
-                            match hosted.count(&payload).await {
-                                Ok(input_tokens) => MinerMessage::CountResult { count_id, input_tokens },
-                                Err(error) => {
-                                    MinerMessage::CountError { count_id, code: error.code, message: error.message }
-                                }
-                            }
-                        }
-                        _ => MinerMessage::CountError {
-                            count_id,
-                            code: JobErrorCode::RuntimeFailed,
-                            message: format!("{model} at revision {model_revision} is not served here"),
-                        },
-                    };
-                    let _ = out.send(reply).await;
-                });
+            PoolMessage::CountTokens {
+                count_id,
+                model,
+                model_revision,
+                runtime_fingerprint,
+                timeout_ms,
+                operation: _,
+                payload,
+            } => {
+                self.start_count(count_id, model, model_revision, runtime_fingerprint, timeout_ms, payload, out);
+            }
+            PoolMessage::CancelCount { count_id } => {
+                if let Some(handle) = self.active_counts.lock().unwrap().remove(&count_id) {
+                    handle.abort();
+                }
             }
             PoolMessage::Job {
                 job_id: _,
@@ -312,6 +181,7 @@ impl Miner {
                 model,
                 model_revision,
                 profile,
+                runtime_fingerprint,
                 operation,
                 stream,
                 input_tokens: _,
@@ -319,7 +189,13 @@ impl Miner {
                 timeout_ms,
                 payload,
             } => {
-                let checked = self.check_job(&model, &model_revision, &profile, required_context_tokens);
+                let checked = self.check_job(
+                    &model,
+                    &model_revision,
+                    &profile,
+                    required_context_tokens,
+                    runtime_fingerprint.as_deref(),
+                );
                 let (ready, permit) = match checked {
                     Ok(ready) => ready,
                     Err((reason, message)) => {
@@ -346,7 +222,7 @@ impl Miner {
                         Ok(Ok(())) => None,
                     };
                     if let Some(error) = error {
-                        if error.code == JobErrorCode::RuntimeFailed
+                        if matches!(error.code, JobErrorCode::RuntimeFailed | JobErrorCode::OutOfMemory)
                             && let Some(hosted) = miner.hosted(&model)
                         {
                             hosted.report_broken(&ready.client);
@@ -379,48 +255,9 @@ impl Miner {
         }
     }
 
-    /// Whether this miner can run the job now; takes a device slot if so.
-    fn check_job(
-        &self,
-        model: &str,
-        revision: &str,
-        profile: &str,
-        required_context: u32,
-    ) -> Result<(Ready, SlotGuard), (RejectReason, String)> {
-        if self.draining.load(Ordering::SeqCst) {
-            return Err((RejectReason::Draining, "miner is shutting down".into()));
-        }
-        let Some(hosted) = self.hosted(model) else {
-            return Err((RejectReason::ModelUnavailable, format!("{model} is not served here")));
-        };
-        if hosted.revision != revision {
-            return Err((RejectReason::RevisionMismatch, format!("serving {}", hosted.revision)));
-        }
-        let Some(ready) = hosted.ready() else {
-            return Err((RejectReason::ModelUnavailable, "runtime is restarting".into()));
-        };
-        if ready.profile.id != profile {
-            return Err((RejectReason::ModelUnavailable, format!("serving profile {}", ready.profile.id)));
-        }
-        if ready.profile.context_tokens < required_context {
-            return Err((
-                RejectReason::ContextTooSmall,
-                format!("context {} < required {required_context}", ready.profile.context_tokens),
-            ));
-        }
-        let slots = self.device_slots() as usize;
-        // Rust 1.99 deprecates fetch_update for try_update, which older toolchains lack.
-        #[allow(deprecated)]
-        let taken = self.running.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < slots).then_some(n + 1));
-        if taken.is_err() {
-            return Err((RejectReason::Busy, "all device slots are busy".into()));
-        }
-        let permit = SlotGuard(self.running.clone());
-        Ok((ready, permit))
-    }
-
     async fn abort_all(&self) {
-        let handles: Vec<_> = self.active.lock().unwrap().drain().map(|(_, handle)| handle).collect();
+        let mut handles: Vec<_> = self.active.lock().unwrap().drain().map(|(_, handle)| handle).collect();
+        handles.extend(self.active_counts.lock().unwrap().drain().map(|(_, handle)| handle));
         for handle in handles {
             handle.abort();
             let _ = handle.await;
@@ -442,59 +279,6 @@ impl Drop for SlotGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
     }
-}
-
-async fn execute(
-    ready: &Ready,
-    operation: Operation,
-    stream: bool,
-    payload: &Value,
-    attempt_id: &str,
-    out: &mpsc::Sender<MinerMessage>,
-) -> Result<(), RuntimeError> {
-    let result = |body| MinerMessage::Result { attempt_id: attempt_id.to_string(), body };
-    match (operation, stream) {
-        (Operation::Systemone, _) => {
-            let body = ready.systemone(payload).await?;
-            let _ = out.send(result(body)).await;
-        }
-        (Operation::ChatCompletions, false) => {
-            let body = ready.client.chat(payload).await?;
-            let _ = out.send(result(body)).await;
-        }
-        (Operation::ChatCompletions, true) => {
-            let mut events = ready.client.chat_stream(payload).await?;
-            let _ = out.send(MinerMessage::StreamStart { attempt_id: attempt_id.into() }).await;
-            let mut seq = 0;
-            let mut usage = None;
-            loop {
-                match events.next().await {
-                    None => return Err(RuntimeError::new(JobErrorCode::RuntimeFailed, "stream ended without [DONE]")),
-                    Some(Err(error)) => return Err(error),
-                    Some(Ok(StreamItem::Done)) => break,
-                    Some(Ok(StreamItem::Chunk(chunk))) => {
-                        let usage_only = chunk.get("choices").and_then(Value::as_array).is_some_and(Vec::is_empty)
-                            && chunk.get("usage").is_some();
-                        if usage_only {
-                            usage = chunk.get("usage").cloned();
-                            continue;
-                        }
-                        // waiting here applies the pool's backpressure to the runtime
-                        if out
-                            .send(MinerMessage::StreamChunk { attempt_id: attempt_id.into(), seq, chunk })
-                            .await
-                            .is_err()
-                        {
-                            return Ok(());
-                        }
-                        seq += 1;
-                    }
-                }
-            }
-            let _ = out.send(MinerMessage::StreamEnd { attempt_id: attempt_id.into(), usage }).await;
-        }
-    }
-    Ok(())
 }
 
 fn text(message: &MinerMessage) -> Message {

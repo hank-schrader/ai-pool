@@ -42,8 +42,8 @@ Status: `curl -H "Authorization: Bearer <admin token>" https://pool.example.com/
 
 The pool also serves a public live status page at `/`, with totals from `/v1/stats` and live SSE at `/v1/stats/stream`.
 
-To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. It serves only
-`h2o-q8` (Q8_0, 4.48 GB), which is the default; the removed `h2o` id gets the
+To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. It serves default
+`h2o-q8` (Q8_0, 4.48 GB) and opt-in `qwen3.8-27b-ud-q3-k-xl`; the removed `h2o` id gets the
 normal `model_not_found` error. ARM CPU miners request the `cpu` catalog
 feature; v0.2.6 CUDA miners continue receiving a compatible CUDA-only view. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
 
@@ -101,3 +101,20 @@ Hide/show the tab and inspect network requests for stream closure/reconnection.
 Restart a local server and confirm that its new epoch replaces old history.
 Check `/`, its generated JS/CSS URLs, `/v1/stats`, and `curl -N` against
 `/v1/stats/stream` for initial snapshot, ticks, and cache/security headers.
+
+## 0.2.8 Qwen cutover
+
+Build the matching `ai-pool-server:0.2.8` image on the development host and stream
+it with `docker save | ssh … docker load`. Keep a rollback image, retag the loaded
+image as `ai-pool-server:latest`, then in the deployment directory run
+`docker compose up -d --no-build --force-recreate pool`. Do not build on the small
+pool host or copy the 13.1 GB Qwen GGUF there. Miners fetch the pinned HF artifact
+directly and verify its SHA256. Publish the matching v0.2.8 miner binaries before
+asking Qwen miners to reconnect.
+
+Check container readiness and `/v1/models/qwen3.8-27b-ud-q3-k-xl` locally inside
+the container. With no miner, availability must remain zero and exact counting
+must fail explicitly. A catalog entry does not qualify inference. Qwen CUDA fit,
+exact count versus prompt usage and schema/template decoding remain pending until
+the owner enables a miner. H2O remains the default; old miners do not receive the
+extended chat entry. See the main README for the chat/count and fingerprint contract.

@@ -92,11 +92,21 @@ impl LocalClient {
 
     pub async fn chat_input_tokens(&self, payload: &Value) -> Result<u32, RuntimeError> {
         let reply = self.post_json("/v1/chat/completions/input_tokens", payload).await?;
-        reply
-            .get("input_tokens")
-            .and_then(Value::as_u64)
-            .map(|n| n as u32)
-            .ok_or_else(|| RuntimeError::new(JobErrorCode::Internal, "input_tokens missing from runtime reply"))
+        reply.get("input_tokens").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or_else(|| {
+            RuntimeError::new(JobErrorCode::Internal, "input_tokens missing or out of range in runtime reply")
+        })
+    }
+
+    pub async fn props(&self) -> Result<Value, RuntimeError> {
+        let response = self
+            .http
+            .get(format!("{}/props", self.base))
+            .bearer_auth(&self.api_key)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|_| RuntimeError::failed("runtime metadata unavailable"))?;
+        read_json(check_status(response).await?).await
     }
 
     /// Starts a streaming chat request; the stream yields parsed upstream events.
@@ -114,7 +124,7 @@ impl LocalClient {
                 .await;
         }
         let response = check_status(self.send(path, payload).await?).await?;
-        response.json().await.map_err(|error| RuntimeError::failed(format!("invalid runtime response: {error}")))
+        read_json(response).await
     }
 
     /// Posts an already serialized JSON body (for requests too large to build as a `Value`).
@@ -136,7 +146,7 @@ impl LocalClient {
             .await
             .map_err(|error| RuntimeError::failed(format!("runtime unreachable: {error}")))?;
         let response = check_status(response).await?;
-        response.json().await.map_err(|error| RuntimeError::failed(format!("invalid runtime response: {error}")))
+        read_json(response).await
     }
 
     async fn send(&self, path: &str, payload: &Value) -> Result<reqwest::Response, RuntimeError> {
@@ -150,12 +160,31 @@ impl LocalClient {
     }
 }
 
+async fn read_bounded(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, RuntimeError> {
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| RuntimeError::failed("runtime response interrupted"))?;
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(RuntimeError::new(JobErrorCode::InvalidRequest, "runtime response exceeds byte limit"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+async fn read_json(response: reqwest::Response) -> Result<Value, RuntimeError> {
+    let bytes = read_bounded(response, 1 << 20).await?;
+    serde_json::from_slice(&bytes).map_err(|_| RuntimeError::failed("invalid runtime JSON"))
+}
+
 async fn check_status(response: reqwest::Response) -> Result<reqwest::Response, RuntimeError> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
     }
-    let text = response.text().await.unwrap_or_default();
+    let text = read_bounded(response, 16 << 10).await?;
+    let text = String::from_utf8_lossy(&text);
     Err(map_error(status, &text))
 }
 
@@ -173,6 +202,8 @@ fn classify(status: StatusCode, message: &str) -> RuntimeError {
         message.contains("is too large to process") || message.contains("exceeds the available context size");
     let code = if too_long {
         JobErrorCode::ContextLengthExceeded
+    } else if message.to_ascii_lowercase().contains("out of memory") || message.contains("CUDA error: out of memory") {
+        JobErrorCode::OutOfMemory
     } else if status.is_client_error() {
         JobErrorCode::InvalidRequest
     } else {

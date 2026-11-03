@@ -15,11 +15,20 @@ pub struct ApiError {
     pub param: Option<String>,
     pub retry_after: Option<u64>,
     pub request_id: Option<String>,
+    pub completion_attempts: Option<u32>,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into(), param: None, retry_after: None, request_id: None }
+        Self {
+            status,
+            code,
+            message: message.into(),
+            param: None,
+            retry_after: None,
+            request_id: None,
+            completion_attempts: None,
+        }
     }
 
     pub fn unauthorized() -> Self {
@@ -55,6 +64,11 @@ impl ApiError {
 
     pub fn retry_after(mut self, seconds: u64) -> Self {
         self.retry_after = Some(seconds);
+        self
+    }
+
+    pub fn with_attempts(mut self, attempts: u32) -> Self {
+        self.completion_attempts = Some(attempts);
         self
     }
 
@@ -94,6 +108,9 @@ impl From<RequestError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = (self.status, axum::Json(self.body())).into_response();
+        if let Some(attempts) = self.completion_attempts {
+            response.headers_mut().insert("x-completion-attempts", HeaderValue::from(attempts));
+        }
         if let Some(seconds) = self.retry_after {
             response.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from(seconds));
         }

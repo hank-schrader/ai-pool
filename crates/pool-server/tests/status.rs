@@ -68,6 +68,7 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
                 profile: "cuda-4096".into(),
                 device: "gpu0".into(),
                 context_tokens: 4096,
+                runtime: None,
             }],
         },
     );
@@ -75,7 +76,9 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
     tokio::spawn(async move {
         while let Some(message) = messages.recv().await {
             let reply = match message {
-                PoolMessage::CountTokens { count_id, .. } => MinerMessage::CountResult { count_id, input_tokens: 100 },
+                PoolMessage::CountTokens { count_id, .. } => {
+                    MinerMessage::CountResult { count_id, input_tokens: 100, loaded: None }
+                }
                 PoolMessage::Job { attempt_id, payload, .. } => {
                     let answers: serde_json::Map<String, Value> = payload["questions"]
                         .as_object()
@@ -83,7 +86,7 @@ async fn completed_questions_reach_the_public_api_without_a_socket() {
                         .keys()
                         .map(|id| (id.clone(), json!({"type": "noul", "noul": 0.9})))
                         .collect();
-                    MinerMessage::Result { attempt_id, body: json!({"answers": answers}) }
+                    MinerMessage::Result { attempt_id, body: json!({"answers": answers}), runtime: None }
                 }
                 _ => continue,
             };

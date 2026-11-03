@@ -3,6 +3,7 @@
 pub mod catalog;
 pub mod messages;
 pub mod requests;
+pub mod runtime;
 
 pub use catalog::{Accelerator, Backend, Capability, Catalog, Model, Profile};
 pub use messages::{MinerMessage, Operation, PoolMessage};

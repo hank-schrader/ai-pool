@@ -2,8 +2,8 @@
 
 A miner serves ai-pool's models from your GPU. It connects out to the pool over
 HTTPS, so it needs no open ports. The examples use `https://pool.example.com`;
-replace it with the address of the pool you join. The pool serves one model,
-`h2o-q8` (Q8_0, 4.48 GB). It is also the default. The former BF16 model id
+replace it with the address of the pool you join. The default model is
+`h2o-q8` (Q8_0, 4.48 GB). Qwen3.8-27B UD-Q3_K_XL is an opt-in chat model. The former BF16 model id
 `h2o` has been removed; clients using it receive `model_not_found`.
 
 ## Requirements
@@ -59,7 +59,7 @@ pool-miner --version
 The binaries go to `~/.local/share/ai-pool/<version>` and are linked into
 `~/.local/bin`, which the installer adds to your shell's PATH. Pass
 `--version vX.Y.Z` to pin a release or `--no-modify-path` to leave your shell
-files alone (`curl … | sh -s -- --version v0.2.7`).
+files alone (`curl … | sh -s -- --version v0.2.8`).
 
 Windows (PowerShell):
 
@@ -70,7 +70,7 @@ pool-miner --version
 ```
 
 It installs into `%LOCALAPPDATA%\ai-pool\<version>` and adds it to your user
-PATH. Pin a release with `.\install.ps1 -Version v0.2.7`.
+PATH. Pin a release with `.\install.ps1 -Version v0.2.8`.
 
 ## 2. Check the machine
 
@@ -177,7 +177,7 @@ and this on-start script. It runs on every start, including after a stop/start:
 #!/bin/bash
 POOL=https://pool.example.com
 MODELS=h2o-q8
-VERSION=v0.2.7     # pool-miner release to install
+VERSION=v0.2.8     # pool-miner release to install
 
 # Some hosts leave ~/.ssh with ownership sshd rejects; fix it so key logins work.
 fix_ssh() { chown root:root /root /root/.ssh /root/.ssh/authorized_keys; chmod 755 /root; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; } 2>/dev/null
@@ -228,3 +228,42 @@ rm -rf ~/.local/share/ai-pool ~/.cache/ai-pool        # macOS cache: ~/Library/C
 
 Windows: delete `%LOCALAPPDATA%\ai-pool` (program and cache) and remove it from
 your user PATH.
+
+## Qwen conversational chat (0.2.8)
+
+`qwen3.8-27b-ud-q3-k-xl` uses the existing `llama-b11374` runtime, commit
+`b92761a515ea31e852e7fbc1fad5f874b46f3718`. Miners download the 13,146,393,504-byte
+GGUF directly from `unsloth/Qwen3.8-27B-GGUF` at revision
+`4ca720788d1e01f1bff70c033e0d0028fd02e502` and verify SHA256
+`8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e` locally.
+The pool distributes metadata and requests only; it never stores Qwen weights.
+
+Select it with `--models qwen3.8-27b-ud-q3-k-xl --profile qwen3.8-27b-ud-q3-k-xl=cuda-8192`.
+This provisional CUDA profile has 8,192 input-plus-output tokens, one slot,
+512-token batches/microbatches, f16 KV cache, Jinja, no context shifting,
+no vision/projector or draft/MTP, and no automatic RAM fallback. Its 14,586 MiB
+memory estimate is not measured peak VRAM or a guarantee of fit. GPU memory,
+template behavior, structured decoding and throughput await live qualification.
+An unavailable miner returns an explicit error; no estimated token counts are used.
+
+`POST /v1/chat/completions` accepts nested `response_format.json_schema.schema`,
+`chat_template_kwargs` (including boolean `enable_thinking` and `preserve_thinking`),
+and `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `repeat_penalty`,
+and `seed`. Native tools remain unsupported. `POST /v1/chat/completions/input_tokens`
+accepts the same body and returns the exact formatted input count from the loaded
+runtime with model revision, profile, context, fingerprint and instance metadata.
+Count and completion share one normalized payload; schema/template options reach
+both upstream endpoints unchanged.
+
+`GET /v1/models/{id}` distinguishes catalog capacity from loaded availability and
+reports pinned artifact/runtime expectations and available runtime descriptors.
+Clients preflight a live descriptor, count with `pool.runtime_fingerprint`, then
+complete with that fingerprint and `pool.max_attempts:1`. A missing or changed
+fingerprint returns HTTP 409 `revision_mismatch`; identical configurations may
+run on different instances. Instance IDs are diagnostic metadata. Completion
+headers include model revision/profile, fingerprint, instance, request ID and
+actual completion attempts. Provenance is miner-reported, not remote attestation;
+launch placement is recorded but actual tensor placement is not measured.
+
+New miners request `chat-json-v1`. Older miners receive their compatible H2O
+catalog view; H2O defaults and decision clients retain their behavior.

@@ -41,6 +41,8 @@ pub enum MinerMessage {
     CountResult {
         count_id: String,
         input_tokens: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        loaded: Option<LoadedModel>,
     },
     CountError {
         count_id: String,
@@ -59,6 +61,8 @@ pub enum MinerMessage {
     Result {
         attempt_id: String,
         body: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime: Option<Box<crate::runtime::RuntimeDescriptor>>,
     },
     StreamStart {
         attempt_id: String,
@@ -101,8 +105,15 @@ pub enum PoolMessage {
         count_id: String,
         model: String,
         model_revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime_fingerprint: Option<String>,
+        #[serde(default = "count_timeout")]
+        timeout_ms: u64,
         operation: Operation,
         payload: Value,
+    },
+    CancelCount {
+        count_id: String,
     },
     Job {
         job_id: String,
@@ -110,6 +121,8 @@ pub enum PoolMessage {
         model: String,
         model_revision: String,
         profile: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime_fingerprint: Option<String>,
         operation: Operation,
         stream: bool,
         input_tokens: u32,
@@ -156,6 +169,8 @@ pub struct LoadedModel {
     pub profile: String,
     pub device: String,
     pub context_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<Box<crate::runtime::RuntimeDescriptor>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +188,8 @@ pub enum RejectReason {
 pub enum JobErrorCode {
     /// The request itself is wrong; retrying elsewhere cannot help.
     InvalidRequest,
+    RevisionMismatch,
+    OutOfMemory,
     ContextLengthExceeded,
     /// Runtime unreachable, crashed or out of memory; another miner may succeed.
     RuntimeFailed,
@@ -184,4 +201,8 @@ impl JobErrorCode {
     pub fn retryable(self) -> bool {
         matches!(self, JobErrorCode::RuntimeFailed | JobErrorCode::Timeout | JobErrorCode::Internal)
     }
+}
+
+fn count_timeout() -> u64 {
+    30_000
 }
