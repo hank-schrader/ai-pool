@@ -1,6 +1,15 @@
 use super::*;
 
 pub(super) fn structured(body: &mut Map<String, Value>, payload: &mut Map<String, Value>) -> Result<(), RequestError> {
+    if let Some(format) = body.remove("reasoning_format") {
+        if !matches!(format.as_str(), Some("none" | "deepseek" | "deepseek-legacy" | "auto")) {
+            return Err(RequestError::invalid(
+                "reasoning_format must be none, deepseek, deepseek-legacy, or auto",
+                Some("reasoning_format".into()),
+            ));
+        }
+        payload.insert("reasoning_format".into(), format);
+    }
     if let Some(format) = body.remove("response_format") {
         let invalid = || {
             RequestError::invalid(
