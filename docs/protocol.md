@@ -423,3 +423,5 @@ formatted input + 1536 generated + 256 reserve <= 8192 (at most 6400 input).
 The pool retains its infrastructure boundary check; callers add no independent
 application token caps. Source compatibility and offline builds do not qualify
 live Qwen schema decoding, count-versus-usage equality, memory fit or throughput.
+
+Since 0.2.9 the pool validates every `response_format` schema before counting or dispatch and rejects unsafe ones with HTTP 400 `invalid_request`: bounded depth/size/expansion, unique supported `type` entries, nonnegative integer counts with min <= max, resolvable non-recursive local `$ref`s, and only a simple anchored regex subset in `pattern` (no groups/alternation; counted repetitions min <= max). This protects miners from llama.cpp grammar blow-ups.

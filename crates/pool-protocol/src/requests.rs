@@ -4,6 +4,7 @@
 mod chat;
 mod options;
 mod routing;
+mod schema;
 mod systemone;
 pub use routing::Routing;
 

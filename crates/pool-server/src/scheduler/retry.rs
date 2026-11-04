@@ -41,6 +41,9 @@ impl Scheduler {
     }
 
     pub(super) fn requeue_rejected(&mut self, job_id: &str, session: &str, reason: RejectReason) {
+        let job = self.jobs.get_mut(job_id).expect("released job exists");
+        // The dispatch never ran, regardless of why the miner rejected it.
+        job.attempts = job.attempts.saturating_sub(1);
         if reason == RejectReason::RevisionMismatch {
             let error = revision_mismatch(self.jobs[job_id].new.request.routing.runtime_fingerprint.as_deref());
             self.fail(job_id, error);
@@ -48,8 +51,6 @@ impl Scheduler {
         }
         let job = self.jobs.get_mut(job_id).expect("released job exists");
         job.rejections += 1;
-        // the dispatch never ran, so it does not use up the retry
-        job.attempts = job.attempts.saturating_sub(1);
         let rejections = job.rejections;
         if rejections > MAX_REJECTIONS || !self.can_retry(job_id, session) {
             self.fail(

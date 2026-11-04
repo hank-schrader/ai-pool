@@ -12,20 +12,21 @@ pub(super) fn structured(body: &mut Map<String, Value>, payload: &mut Map<String
         let allowed: &[&str] = match object.get("type").and_then(Value::as_str) {
             Some("text") => &["type"],
             Some("json_object") => {
-                if object.get("schema").is_some_and(|v| !v.is_object()) {
-                    return Err(invalid());
+                if let Some(schema) = object.get("schema") {
+                    super::schema::validate(schema, "response_format.schema")?;
                 }
                 &["type", "schema"]
             }
             Some("json_schema") => {
                 let schema = object.get("json_schema").and_then(Value::as_object).ok_or_else(invalid)?;
-                if !schema.get("schema").is_some_and(Value::is_object)
+                if !schema.contains_key("schema")
                     || schema.keys().any(|k| !matches!(k.as_str(), "name" | "strict" | "schema"))
                     || schema.get("name").is_some_and(|v| !v.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 64))
                     || schema.get("strict").is_some_and(|v| !v.is_boolean())
                 {
                     return Err(invalid());
                 }
+                super::schema::validate(&schema["schema"], "response_format.json_schema.schema")?;
                 &["type", "json_schema"]
             }
             _ => return Err(invalid()),
