@@ -176,7 +176,7 @@ and this on-start script. It runs on every start, including after a stop/start:
 #!/bin/bash
 POOL=https://pool.example.com
 MODELS=elephant-1-q8
-VERSION=v0.2.10    # pool-miner release to install
+VERSION=v0.2.11    # pool-miner release to install
 
 # Some hosts leave ~/.ssh with ownership sshd rejects; fix it so key logins work.
 fix_ssh() { chown root:root /root /root/.ssh /root/.ssh/authorized_keys; chmod 755 /root; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; } 2>/dev/null
