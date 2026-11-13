@@ -31,6 +31,9 @@ pub struct Model {
 pub enum Backend {
     /// Decision model on `/v1/systemone`; prompt must fit one microbatch.
     LlamaServerSystemone,
+    /// OpenJev label readout (Elephant): independent questions, exact longest
+    /// prompt counting, and a noncausal decision GGUF on the pinned runtime.
+    LlamaServerOpenjev,
     /// Text chat on `/v1/chat/completions`.
     LlamaServerChat,
     /// H2O-Lightning decision model on `/v1/systemone`: one label-only forward
@@ -42,7 +45,9 @@ pub enum Backend {
 impl Backend {
     pub fn capability(self) -> Capability {
         match self {
-            Backend::LlamaServerSystemone | Backend::LlamaServerH2o => Capability::Systemone,
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev | Backend::LlamaServerH2o => {
+                Capability::Systemone
+            }
             Backend::LlamaServerChat => Capability::ChatCompletions,
         }
     }

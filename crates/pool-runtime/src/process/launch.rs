@@ -30,7 +30,11 @@ impl LaunchSpec {
         // The pinned server needs prompt < slot context and marks the final readout
         // truncated at prompt + 1 >= context; two reserved tokens keep the prompt
         // limit inclusive, as in refactor-tool's engine.
-        let total_context = if h2o { (self.context_tokens + 2) * slots } else { self.context_tokens };
+        let total_context = if h2o || self.backend == Backend::LlamaServerOpenjev {
+            (self.context_tokens + 2) * slots
+        } else {
+            self.context_tokens
+        };
         let mut args = vec![
             "-m".into(),
             self.weights.display().to_string(),
@@ -51,6 +55,32 @@ impl LaunchSpec {
             Backend::LlamaServerSystemone => {
                 let context = self.context_tokens.to_string();
                 args.extend(["-b".into(), context.clone(), "-ub".into(), context]);
+            }
+            Backend::LlamaServerOpenjev => {
+                // Bidirectional attention must see a whole prompt per microbatch.
+                // Keep placement explicit and avoid loading the optional vision tower.
+                let context = total_context.to_string();
+                args.extend(["-b".into(), context.clone(), "-ub".into(), context]);
+                args.extend(
+                    [
+                        "--fit",
+                        "off",
+                        "--jinja",
+                        "--no-mmproj",
+                        "-fa",
+                        "on",
+                        "-ctk",
+                        "f16",
+                        "-ctv",
+                        "f16",
+                        "--no-context-shift",
+                        "--cache-ram",
+                        "0",
+                        "--ctx-checkpoints",
+                        "0",
+                    ]
+                    .map(String::from),
+                );
             }
             // refactor-tool's engine.rs flags for H2O, except 2048-token prompt chunks, no RAM
             // prompt cache (5% more questions answered) and no context checkpoints (9% more

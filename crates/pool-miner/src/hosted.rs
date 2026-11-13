@@ -1,5 +1,5 @@
 //! One served model: its llama-server child kept alive by a supervisor, and,
-//! for Clef, the token-count helper.
+//! for native decision models, the token-count helper.
 //!
 //! A profile is only advertised after it answered a near-full-context probe.
 //! Memory estimates cannot see live pressure (on a 16 GB Mac, Clef at 8192
@@ -130,7 +130,7 @@ impl Hosted {
     }
 
     /// Exact input tokens of a payload for this model.
-    /// For H2O that is the longest single question prompt, which is what the
+    /// For H2O/OpenJev that is the longest single question prompt, which is what the
     /// context must hold; the response's `usage.input_tokens` sums all questions.
     pub async fn count(&self, payload: &Value) -> Result<u32, RuntimeError> {
         if let Some(counter) = &self.counter {

@@ -1,80 +1,61 @@
 {
   "schema_version": 1,
   "default_models": [
-    "h2o-q8"
+    "elephant-1-q8"
   ],
   "runtimes": [
     {
       "id": "llama-b11374",
       "llama_cpp_commit": "b92761a515ea31e852e7fbc1fad5f874b46f3718"
+    },
+    {
+      "id": "llama-b11858",
+      "llama_cpp_commit": "30322097581f70126705570def8810013787af47"
     }
   ],
   "models": [
     {
-      "id": "h2o-q8",
-      "description": "H2O-Lightning-4B Q8_0 decision model used by refactor-tool (Apache-2.0; quantized from the h2o BF16 GGUF sha256 74ac588b with llama-quantize from runtime llama-b11374, hosted on the pool host). Answers choice, score and yes/no (noul) questions with probabilities, each question read on its own (policy single). Use POST /v1/systemone.",
-      "backend": "llama-server-h2o",
-      "runtime": "llama-b11374",
+      "id": "elephant-1-q8",
+      "description": "Elephant-1 9B Q8_0 text decision model (MIT, Base Labs/Baseten). Pinned decision-wired GGUF with OpenJev readout, noncausal full attention and the System One prompt template. Choice, score and noul via POST /v1/systemone. CUDA fit is estimated until the miner passes its near-full-context startup probe.",
+      "backend": "llama-server-openjev",
+      "runtime": "llama-b11858",
       "weights": {
-        "filename": "h2o-lightning-4b-672dc01e.Q8_0.gguf",
-        "url": "https://ai.metalloobrabotka.online/models/h2o-lightning-4b-672dc01e.Q8_0.gguf",
-        "size_bytes": 4482402720,
-        "sha256": "4d4f7f5e601fb78d726761d9aa2b1ad0dc17e75fd65b0b59dd15b31df0837f84"
+        "filename": "elephant-1.Q8_0.gguf",
+        "url": "https://huggingface.co/debackerl/elephant-1-Q8_0-GGUF/resolve/7bb3494b7aa1a790fca6e84b1de06e7e6a670e97/elephant-1.Q8_0.gguf",
+        "size_bytes": 9527504224,
+        "sha256": "652c102967efa9a1adf9c63ebaada547fba189888ca0680944aae595398fdf9d"
+      },
+      "artifact": {
+        "repository": "debackerl/elephant-1-Q8_0-GGUF",
+        "revision": "7bb3494b7aa1a790fca6e84b1de06e7e6a670e97",
+        "filename": "elephant-1.Q8_0.gguf",
+        "size_bytes": 9527504224,
+        "sha256": "652c102967efa9a1adf9c63ebaada547fba189888ca0680944aae595398fdf9d"
       },
       "limits": {
         "request_bytes": 1048576,
         "max_questions": 16,
-        "max_choice_options": 16,
-        "max_score_levels": 16
+        "max_choice_options": 26,
+        "max_score_levels": 10
       },
       "execution": {
-        "gpu_layers": 99
+        "gpu_layers": 99,
+        "allow_ram_fallback": false
       },
       "profiles": [
+        {
+          "id": "cuda-4096",
+          "accelerator": "cuda",
+          "context_tokens": 4096,
+          "memory_mib": 12288,
+          "memory_source": "estimate"
+        },
         {
           "id": "cuda-8192",
           "accelerator": "cuda",
           "context_tokens": 8192,
-          "memory_mib": 5120,
+          "memory_mib": 14336,
           "memory_source": "estimate"
-        },
-        {
-          "id": "cuda-40960-x3",
-          "accelerator": "cuda",
-          "context_tokens": 40960,
-          "memory_mib": 9216,
-          "memory_source": "estimate",
-          "parallel_slots": 3
-        },
-        {
-          "id": "cuda-40960-x4",
-          "accelerator": "cuda",
-          "context_tokens": 40960,
-          "memory_mib": 10240,
-          "memory_source": "estimate",
-          "parallel_slots": 4
-        },
-        {
-          "id": "cuda-40960-x6",
-          "accelerator": "cuda",
-          "context_tokens": 40960,
-          "memory_mib": 13312,
-          "memory_source": "estimate",
-          "parallel_slots": 6
-        },
-        {
-          "id": "cpu-4096",
-          "accelerator": "cpu",
-          "context_tokens": 4096,
-          "memory_mib": 6144,
-          "memory_source": "measured"
-        },
-        {
-          "id": "cpu-8192",
-          "accelerator": "cpu",
-          "context_tokens": 8192,
-          "memory_mib": 6144,
-          "memory_source": "measured"
         }
       ]
     },

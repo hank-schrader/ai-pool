@@ -15,7 +15,7 @@ missing or incorrect credentials never produce HTTP 401 on these routes.
 curl https://pool.example.com/v1/models
 curl https://pool.example.com/v1/systemone \
   -H 'Content-Type: application/json' \
-  -d '{"model":"h2o-q8","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
+  -d '{"model":"elephant-1-q8","state":"The sky is blue.","questions":{"q":{"type":"noul","instructions":"Is the sky blue?"}}}'
 ```
 
 Every inference request uses the client label `public` for fairness and logs.
@@ -427,3 +427,26 @@ live Qwen schema decoding, count-versus-usage equality, memory fit or throughput
 Since 0.2.9 the pool validates every `response_format` schema before counting or dispatch and rejects unsafe ones with HTTP 400 `invalid_request`: bounded depth/size/expansion, unique supported `type` entries, nonnegative integer counts with min <= max, resolvable non-recursive local `$ref`s, and only a simple anchored regex subset in `pattern` (no groups/alternation; counted repetitions min <= max). This protects miners from llama.cpp grammar blow-ups.
 
 Since 0.2.10 chat requests may set `reasoning_format` (`none`, `deepseek`, `deepseek-legacy` or `auto`); the pool forwards it to the miner's llama-server. Schema-constrained Qwen requests with thinking disabled need `deepseek`, because with `none` the response-format grammar cannot accept the template's empty think block.
+
+## Elephant decision cutover (0.2.11)
+
+The served default is `elephant-1-q8`; `h2o` and `h2o-q8` return
+`model_not_found`. Historical H2O protocol/qualification sections above describe
+older releases. Qwen chat remains available with its unchanged runtime pin.
+
+Elephant uses backend `llama-server-openjev`, capability `systemone`, contract
+`openjev-text-v1`, a SHA256-pinned decision GGUF and `llama-b11858`. It accepts
+text/JSON state, up to 16 questions, choice with 2–26 options, score with 2–10
+levels, and noul. Images and streaming are rejected. Questions are evaluated
+independently by the native decision endpoint, not by H2O's custom prompt engine.
+
+The bundled native counter uses the same pinned prompt renderer and tokenizer.
+Admission uses the longest question prompt; response `usage.input_tokens` sums
+all evaluated prompts. Counts do not require a GPU inference slot. Profiles
+publish conservative memory estimates and only become available after their
+near-full-context startup probe. CUDA placement is explicit, with one slot,
+full-prompt microbatches, f16 caches and no automatic RAM fallback.
+
+Miners request `openjev-v1` in addition to `chat-json-v1`. The pool omits Elephant
+from earlier catalog views, preventing old miners from parsing an unknown
+backend/runtime. Install v0.2.11 or newer to serve Elephant.

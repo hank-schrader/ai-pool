@@ -1,4 +1,4 @@
-//! The `clef-token-count` helper: exact Clef input counts from the pinned
+//! The `clef-token-count` helper: exact decision input counts from the pinned
 //! llama.cpp prompt code, without a GPU (see `native/clef-token-count`).
 
 use std::{
@@ -41,7 +41,7 @@ pub fn locate(explicit: Option<&Path>) -> Result<PathBuf> {
     candidates.push(PathBuf::from("build").join("clef-token-count").join(BINARY));
     candidates.into_iter().find(|path| path.is_file()).ok_or_else(|| {
         Error::msg(
-            "the Clef token-count helper was not found. Build it with `scripts/build-helper.sh` \
+            "the decision token-count helper was not found. Build it with `scripts/build-helper.sh` \
              (or pass --clef-helper / set AI_POOL_CLEF_HELPER)",
         )
     })
@@ -88,16 +88,16 @@ impl ClefCounter {
         let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
         let ready = tokio::time::timeout(Duration::from_secs(60), stdout.next_line())
             .await
-            .map_err(|_| Error::msg("Clef token-count helper did not become ready"))??
-            .ok_or_else(|| Error::msg("Clef token-count helper exited during startup"))?;
+            .map_err(|_| Error::msg("Decision token-count helper did not become ready"))??
+            .ok_or_else(|| Error::msg("Decision token-count helper exited during startup"))?;
         let ready: Value = serde_json::from_str(&ready)?;
         if ready["ready"] != json!(true) {
-            return Err(Error::msg(format!("Clef token-count helper failed: {ready}")));
+            return Err(Error::msg(format!("Decision token-count helper failed: {ready}")));
         }
         let built = ready["llama_cpp_commit"].as_str().unwrap_or_default();
         if built != self.commit {
             return Err(Error::msg(format!(
-                "Clef token-count helper was built from llama.cpp {built}, expected {}; rebuild it",
+                "Decision token-count helper was built from llama.cpp {built}, expected {}; rebuild it",
                 self.commit
             )));
         }

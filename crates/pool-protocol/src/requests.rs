@@ -65,9 +65,10 @@ impl Validated {
 /// `body` has already been parsed and its `model` resolved to `model`.
 pub fn validate(operation: Operation, model: &Model, body: Map<String, Value>) -> Result<Validated, RequestError> {
     match (operation, model.backend) {
-        (Operation::Systemone, Backend::LlamaServerSystemone | Backend::LlamaServerH2o) => {
-            systemone::validate(model, body)
-        }
+        (
+            Operation::Systemone,
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev | Backend::LlamaServerH2o,
+        ) => systemone::validate(model, body),
         (Operation::ChatCompletions, Backend::LlamaServerChat) => chat::validate(model, body),
         _ => Err(RequestError {
             code: "unsupported_capability",
@@ -75,7 +76,8 @@ pub fn validate(operation: Operation, model: &Model, body: Map<String, Value>) -
                 "model {:?} serves {}; use its endpoint instead",
                 model.id,
                 match model.backend {
-                    Backend::LlamaServerSystemone | Backend::LlamaServerH2o => "POST /v1/systemone",
+                    Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev | Backend::LlamaServerH2o =>
+                        "POST /v1/systemone",
                     Backend::LlamaServerChat => "POST /v1/chat/completions",
                 }
             ),

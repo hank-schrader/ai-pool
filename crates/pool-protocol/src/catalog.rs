@@ -77,7 +77,11 @@ impl Catalog {
         if model.execution.chat_json || model.artifact.is_some() {
             identity.push_str(&crate::runtime::digest(&serde_json::json!({
                 "artifact": model.artifact, "execution": model.execution,
-                "contract": crate::runtime::CHAT_JSON_CONTRACT,
+                "contract": if model.backend == Backend::LlamaServerOpenjev {
+                    "openjev-text-v1"
+                } else {
+                    crate::runtime::CHAT_JSON_CONTRACT
+                },
             })));
         }
         format!("sha256:{}", hex(&Sha256::digest(identity.as_bytes())))
@@ -146,12 +150,12 @@ mod tests {
     const ALL_MODELS: &str = include_str!("../../../tests/fixtures/all-models.json");
 
     #[test]
-    fn shipped_catalog_serves_h2o_and_opt_in_chat() {
+    fn shipped_catalog_serves_elephant_and_opt_in_chat() {
         let catalog = Catalog::parse(SHIPPED).expect("config/models.json is valid");
         let ids: Vec<_> = catalog.models.iter().map(|model| model.id.as_str()).collect();
-        assert_eq!(ids, ["h2o-q8", "qwen3.8-27b-ud-q3-k-xl"]);
+        assert_eq!(ids, ["elephant-1-q8", "qwen3.8-27b-ud-q3-k-xl"]);
         assert!(catalog.model("h2o").is_none());
-        assert_eq!(catalog.default_models, ["h2o-q8"]);
+        assert_eq!(catalog.default_models, ["elephant-1-q8"]);
         let all = Catalog::parse(ALL_MODELS).expect("tests/fixtures/all-models.json is valid");
         assert_eq!(all.model("clef").unwrap().capability(), Capability::Systemone);
     }
@@ -189,7 +193,7 @@ mod tests {
 
     #[test]
     fn h2o_is_a_systemone_model_with_slots_on_its_big_profile() {
-        let catalog = Catalog::parse(SHIPPED).unwrap();
+        let catalog = Catalog::parse(ALL_MODELS).unwrap();
         let h2o = catalog.model("h2o-q8").unwrap();
         assert_eq!(h2o.capability(), Capability::Systemone);
         assert_eq!(serde_json::to_string(&h2o.backend).unwrap(), "\"llama-server-h2o\"");

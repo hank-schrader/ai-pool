@@ -73,7 +73,7 @@ impl Model {
                     problems.push(format!("{at}: limits.max_score_levels must be 1-16 (labels A-P)"));
                 }
             }
-            Backend::LlamaServerSystemone => {
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev => {
                 if systemone.iter().any(Option::is_none) || chat.iter().any(Option::is_some) {
                     problems.push(format!(
                         "{at}: systemone limits need max_questions, max_choice_options and max_score_levels only"
@@ -85,6 +85,9 @@ impl Model {
                 }
                 if !(2..=255).contains(&limits.max_choice_options.unwrap()) {
                     problems.push(format!("{at}: limits.max_choice_options must be 2-255"));
+                }
+                if self.backend == Backend::LlamaServerOpenjev && limits.max_choice_options.unwrap() > 26 {
+                    problems.push(format!("{at}: OpenJev supports at most 26 validated label options"));
                 }
                 if !(2..=10).contains(&limits.max_score_levels.unwrap()) {
                     problems.push(format!("{at}: limits.max_score_levels must be 2-10"));
@@ -106,7 +109,7 @@ impl Model {
     pub(super) fn profile_problems(&self, at: &str, problems: &mut Vec<String>) {
         let execution = &self.execution;
         match self.backend {
-            Backend::LlamaServerSystemone | Backend::LlamaServerH2o => {
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev | Backend::LlamaServerH2o => {
                 if execution.batch_tokens.is_some() || execution.microbatch_tokens.is_some() {
                     problems.push(format!("{at}: systemone models use batch = microbatch = context; remove them"));
                 }

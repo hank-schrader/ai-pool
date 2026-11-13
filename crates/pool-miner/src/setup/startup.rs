@@ -17,7 +17,7 @@ pub(super) async fn start_prepared(
         let runtime = &runtimes[&model.runtime];
         let commit = &catalog.runtime(&model.runtime).expect("validated").llama_cpp_commit;
         let counter = match model.backend {
-            Backend::LlamaServerSystemone => {
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev => {
                 Some(start_counter(options.clef_helper.as_deref(), weights, commit).await?)
             }
             Backend::LlamaServerChat | Backend::LlamaServerH2o => None,
@@ -66,7 +66,7 @@ pub(super) fn startup_profiles(
     ram_budget_mib: u64,
     exact: bool,
 ) -> Vec<(pool_protocol::Profile, Placement)> {
-    if exact || !choice.model.execution.allow_ram_fallback || choice.placement != Placement::Published {
+    if exact || choice.placement != Placement::Published {
         return vec![(choice.profile.clone(), choice.placement)];
     }
     let mut fallback: Vec<_> = choice
@@ -77,6 +77,7 @@ pub(super) fn startup_profiles(
             profile.id == choice.profile.id
                 || (profile.memory_mib <= choice.profile.memory_mib
                     && profile.preference() < choice.profile.preference()
+                    && (choice.model.execution.allow_ram_fallback || !profile.offloaded())
                     && profile.host_memory_mib.unwrap_or(0) <= ram_budget_mib)
         })
         .cloned()
@@ -89,6 +90,6 @@ pub(super) fn startup_profiles(
 async fn start_counter(explicit: Option<&Path>, weights: &Path, commit: &str) -> Result<ClefCounter, String> {
     let path = helper::locate(explicit).map_err(|error| error.to_string())?;
     let counter = ClefCounter::start(path, weights.to_path_buf(), commit).await.map_err(|error| error.to_string())?;
-    tracing::info!("Clef token counter: {}", counter.path().display());
+    tracing::info!("Decision token counter: {}", counter.path().display());
     Ok(counter)
 }

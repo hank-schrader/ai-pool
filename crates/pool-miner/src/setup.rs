@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn smaller_context_can_step_down_with_the_same_measured_memory() {
-        let catalog = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
         let model = catalog.model("h2o-q8").unwrap();
         let choice = Choice { model, profile: model.profile("cpu-8192").unwrap(), placement: Placement::Published };
         let profiles = startup_profiles(&choice, Accelerator::Cpu, 0, false);

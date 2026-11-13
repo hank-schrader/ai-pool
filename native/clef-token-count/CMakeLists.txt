@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 project(clef-token-count C CXX)
 
 # Must match runtime/manifest.json and the catalog runtime.
-set(LLAMA_CPP_COMMIT "b92761a515ea31e852e7fbc1fad5f874b46f3718")
+set(LLAMA_CPP_COMMIT "30322097581f70126705570def8810013787af47")
 set(LLAMA_CPP_SOURCE_DIR "" CACHE PATH "Existing llama.cpp checkout at the pinned commit (skips the download)")
 
 # CPU-only, static: the helper only loads the vocabulary, so no GPU backend is needed.

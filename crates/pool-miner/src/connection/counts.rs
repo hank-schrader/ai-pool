@@ -43,11 +43,12 @@ impl Miner {
                 {
                     return Err(RuntimeError::new(JobErrorCode::RevisionMismatch, "runtime fingerprint mismatch"));
                 }
-                let input_tokens = if hosted.model.backend == Backend::LlamaServerSystemone {
-                    hosted.count(&payload).await?
-                } else {
-                    hosted.count_ready(&payload, &ready).await?
-                };
+                let input_tokens =
+                    if matches!(hosted.model.backend, Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev) {
+                        hosted.count(&payload).await?
+                    } else {
+                        hosted.count_ready(&payload, &ready).await?
+                    };
                 let loaded = pool_protocol::messages::LoadedModel {
                     model: model.clone(),
                     model_revision: revision,

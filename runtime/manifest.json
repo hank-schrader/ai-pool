@@ -77,6 +77,69 @@
           ]
         }
       ]
+    },
+    {
+      "id": "llama-b11858",
+      "llama_cpp_commit": "30322097581f70126705570def8810013787af47",
+      "release_tag": "b11858",
+      "targets": [
+        {
+          "target": "x86_64-unknown-linux-gnu",
+          "accelerator": "cuda",
+          "qualified": false,
+          "server_binary": "llama-server",
+          "archives": [
+            {
+              "name": "llama-b11858-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11858/llama-b11858-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "size_bytes": 178013643,
+              "sha256": "90ba11db37fc72234cbcb0ce84ee3d82f607d89281d0c3cf70605c5e893cb40c"
+            },
+            {
+              "name": "cudart-llama-b11858-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11858/cudart-llama-b11858-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "size_bytes": 594377552,
+              "sha256": "788d49eb7a3e678f712c44ae07db317b84d0da3d8f33633dcce6776a04fbd47a"
+            }
+          ],
+          "min_driver": "570.26"
+        },
+        {
+          "target": "x86_64-pc-windows-msvc",
+          "accelerator": "cuda",
+          "qualified": false,
+          "server_binary": "llama-server.exe",
+          "archives": [
+            {
+              "name": "llama-b11858-bin-win-cuda-13.4-x64.zip",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11858/llama-b11858-bin-win-cuda-13.4-x64.zip",
+              "size_bytes": 159950324,
+              "sha256": "9d42f484bbac04030f6caf39106832aab01c993d2cffcee58d296284d1fb4c67"
+            },
+            {
+              "name": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11858/cudart-llama-bin-win-cuda-13.4-x64.zip",
+              "size_bytes": 423535356,
+              "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+            }
+          ],
+          "min_driver": "615"
+        },
+        {
+          "target": "aarch64-unknown-linux-gnu",
+          "accelerator": "cpu",
+          "qualified": false,
+          "server_binary": "llama-server",
+          "archives": [
+            {
+              "name": "llama-b11858-bin-ubuntu-arm64.tar.gz",
+              "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11858/llama-b11858-bin-ubuntu-arm64.tar.gz",
+              "size_bytes": 18152114,
+              "sha256": "496e463208a3a027b47b9c4da063f389051af9f68987dfb28508416c76e9d0e8"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

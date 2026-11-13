@@ -3,8 +3,9 @@
 A miner serves ai-pool's models from your GPU. It connects out to the pool over
 HTTPS, so it needs no open ports. The examples use `https://pool.example.com`;
 replace it with the address of the pool you join. The default model is
-`h2o-q8` (Q8_0, 4.48 GB). Qwen3.8-27B UD-Q3_K_XL is an opt-in chat model. The former BF16 model id
-`h2o` has been removed; clients using it receive `model_not_found`.
+`elephant-1-q8` (9B, Q8_0, 9.53 GB). Qwen3.8-27B UD-Q3_K_XL remains an opt-in
+chat model. Both `h2o` and `h2o-q8` have been removed from the served catalog;
+requests for them receive `model_not_found`.
 
 ## Requirements
 
@@ -14,33 +15,32 @@ replace it with the address of the pool you join. The default model is
 | OS | glibc 2.38+: Ubuntu 24.04+, Debian 13+, Fedora 39+, Arch | Fedora Asahi Remix 44 tested, including its 16K-page kernel; glibc 2.38+ | Windows 10/11 |
 | Libraries | `libgomp`, OpenSSL 3, `libstdc++` | same; no GPU driver required | included |
 
-Apple Silicon Macs can mine under Asahi Linux. macOS cannot mine `h2o-q8`: it has no Metal profile.
+Elephant's initial profiles target NVIDIA CUDA on Linux/Windows. Its runtime has
+not been qualified on the owner's GPU yet; use `--allow-unqualified-runtime`
+until that measurement is recorded. No Elephant CPU/Metal profile is published.
 
-CUDA memory budgets for `h2o-q8` (catalog estimates). The miner subtracts
+CUDA memory budgets for `elephant-1-q8` (estimates, not measured peaks). The miner subtracts
 256 MiB from free GPU memory and 2 GiB from available RAM before planning:
 
 | GPU budget | RAM budget | What the miner runs |
 |---|---|---|
-| 13,312 MiB | | `cuda-40960-x6`: 6 requests at once, prompts up to 40,960 tokens |
-| 10,240 MiB | | `cuda-40960-x4`: 4 at once |
-| 9,216 MiB | | `cuda-40960-x3`: 3 at once |
-| 5,120 MiB | | `cuda-8192`: 1 at once, prompts up to 8,192 tokens |
-| 1,280 MiB | 7,168 MiB | `cuda-8192` with the weights in RAM (automatic, much slower) |
+| 14,336 MiB | | `cuda-8192`: one request, prompts up to 8,192 tokens |
+| 12,288 MiB | | `cuda-4096`: one request, prompts up to 4,096 tokens |
 
-On ARM Linux, `cpu-8192` runs 8,192-token prompts with one slot;
-`cpu-4096` provides a smaller context when the startup probe needs to step down.
-Both reserve **6,144 MiB of system RAM**, including measured headroom on the
-Asahi M1 Pro. The miner budgets Linux's available RAM minus 2 GiB for the OS.
-Other ARM machines use the same profiles and must pass their own startup probe.
+An otherwise free 16 GiB GPU is expected to fit Elephant Q8 with these bounded
+contexts. The miner must pass its near-full-context startup probe before
+advertising capacity. Automatic RAM fallback is disabled. Mammoth-1 Q8 has
+28.60 GB of weights alone, so it cannot reside entirely in 16 GiB VRAM.
 
-The CPU backend keeps weights in RAM without mmap (`--load-mode none`), avoiding
-a duplicate mapped copy when weights are repacked. It uses 512-token batches
-and the performance-core count on heterogeneous CPUs, or all available cores on
-uniform machines. This answered real H2O requests faster than Vulkan on the test
-laptop with a comparable memory footprint. See [the Asahi qualification](docs/qualification/linux-asahi.md)
-for memory, speed and cancellation measurements.
+Elephant uses the pinned `llama-b11858` runtime and a decision-wired GGUF with
+OpenJev labels, the System One prompt template, and noncausal full attention.
+Its text-only API supports choice (2–26 options), score (2–10 levels) and noul
+questions. Images are not enabled. Exact admission counts use the longest
+question prompt; response input-token usage sums the question prompts. The
+legacy-named `clef-token-count` helper now supports OpenJev too. See
+[the cutover notes](docs/qualification/elephant-1.md).
 
-Disk: about 7 GB for the weights (4.48 GB) and the llama.cpp runtime.
+Disk: about 12 GB for the weights (9.53 GB), downloads and the CUDA runtime.
 
 The miner checks all of this itself: `pool-miner doctor` reports the accelerator,
 driver, libraries, disk and cache, and prints the command that fixes each
@@ -101,32 +101,31 @@ work. In a container, pass the GPU through with the NVIDIA Container Toolkit.
 ## 3. Start mining
 
 ```sh
-pool-miner --pool https://pool.example.com --models h2o-q8
+pool-miner --pool https://pool.example.com --models elephant-1-q8 --allow-unqualified-runtime
 ```
 
 The miner picks the largest profile that fits, asks before downloading the
-4.48 GB of weights, verifies their sha256, starts llama.cpp, answers a
+9.53 GB of weights, verifies their sha256, starts llama.cpp, answers a
 full-length test prompt, and connects:
 
 ```
 Profile plan:
-  h2o-q8   cuda-40960-x4   context 40960   10240 MiB (estimate), 4 cache slots
+  elephant-1-q8   cuda-8192   context 8192   14336 MiB (estimate), 1 cache slot
 ...
-h2o-q8: cuda-40960-x4 passed its 40960-token probe in …s
+elephant-1-q8: cuda-8192 passed its 8192-token probe in …s
 connected to https://pool.example.com (session ses_…)
 ```
 
-On a small GPU the plan says `automatic RAM fallback (-ngl 0)` instead, and the
-model serves prompts up to 8,192 tokens with its weights in system RAM.
+On a GPU that cannot fit either profile, Elephant is refused. It does not
+silently move the model to system RAM.
 
-- Windows: add `--allow-unqualified-runtime`, or answer `y` when asked; it
-  has not been tested on hardware. The ARM Linux CPU runtime is qualified on
-  the Asahi test machine and does not need this flag.
+- Add `--allow-unqualified-runtime`, or answer `y` when asked; Elephant's new
+  CUDA runtime has not yet been qualified on the owner's hardware.
 - `--yes` skips the download question (needed without a terminal).
-- `--context h2o-q8=8192` or `--profile h2o-q8=cuda-40960-x3` forces a profile;
+- `--context elephant-1-q8=8192` or `--profile elephant-1-q8=cuda-4096` forces a profile;
   `--device 1` picks the second GPU. Run one miner per GPU.
 - Weights you already have can be imported instead of downloaded:
-  `pool-miner download h2o-q8 --import /path/to/h2o-lightning-4b-672dc01e.Q8_0.gguf`.
+  `pool-miner download elephant-1-q8 --import /path/to/elephant-1.Q8_0.gguf`.
 - Ctrl-C finishes the jobs in progress and stops; press it twice to stop at once.
   The miner reconnects by itself when the pool restarts.
 
@@ -138,11 +137,11 @@ Linux, as a systemd user service:
 mkdir -p ~/.config/systemd/user
 cat > ~/.config/systemd/user/pool-miner.service <<'EOF'
 [Unit]
-Description=ai-pool h2o-q8 miner
+Description=ai-pool elephant-1-q8 miner
 After=network-online.target
 
 [Service]
-ExecStart=%h/.local/bin/pool-miner --pool https://pool.example.com --models h2o-q8 --yes
+ExecStart=%h/.local/bin/pool-miner --pool https://pool.example.com --models elephant-1-q8 --yes --allow-unqualified-runtime
 KillSignal=SIGINT
 TimeoutStopSec=45
 Restart=on-failure
@@ -164,7 +163,7 @@ Windows (untested): keep it running in a terminal window, or create a Task
 Scheduler task that runs at log on:
 
 ```powershell
-schtasks /Create /SC ONLOGON /TN ai-pool-miner /TR "pool-miner --pool https://pool.example.com --models h2o-q8 --yes --allow-unqualified-runtime"
+schtasks /Create /SC ONLOGON /TN ai-pool-miner /TR "pool-miner --pool https://pool.example.com --models elephant-1-q8 --yes --allow-unqualified-runtime"
 ```
 
 ## 5. Rented GPUs (Vast.ai and similar)
@@ -176,7 +175,7 @@ and this on-start script. It runs on every start, including after a stop/start:
 ```bash
 #!/bin/bash
 POOL=https://pool.example.com
-MODELS=h2o-q8
+MODELS=elephant-1-q8
 VERSION=v0.2.10    # pool-miner release to install
 
 # Some hosts leave ~/.ssh with ownership sshd rejects; fix it so key logins work.
@@ -202,7 +201,7 @@ main thread is the bottleneck, so a recent desktop CPU (Ryzen 7000/9000, Intel
 ## 6. Measure
 
 ```sh
-pool-miner bench --pool https://pool.example.com --models h2o-q8 --duration 120
+pool-miner bench --pool https://pool.example.com --models elephant-1-q8 --duration 120
 ```
 
 `bench` runs fitting profiles (skipping published offload profiles when a full-GPU
@@ -265,5 +264,5 @@ headers include model revision/profile, fingerprint, instance, request ID and
 actual completion attempts. Provenance is miner-reported, not remote attestation;
 launch placement is recorded but actual tensor placement is not measured.
 
-New miners request `chat-json-v1`. Older miners receive their compatible H2O
-catalog view; H2O defaults and decision clients retain their behavior.
+New miners request `chat-json-v1,openjev-v1`. Older miners do not receive Elephant;
+install v0.2.11 or newer to serve it. Qwen's artifact and runtime remain unchanged.

@@ -1,11 +1,12 @@
-// clef-token-count: exact Clef System One input token counts, without inference.
+// Exact System One input token counts, without inference. The installed binary
+// keeps its legacy clef-token-count name for installer compatibility.
 //
-// Loads only the vocabulary and metadata of a Clef GGUF and runs the same
-// parse_questions -> parse_state -> fill_task_joint path as the pinned
-// llama-server, so counts match `usage.input_tokens` of /v1/systemone.
+// Loads only vocabulary and metadata and runs the pinned llama-server's prompt
+// renderer. Joint models return their single prompt length. OpenJev returns the
+// longest question for context admission and the summed length for usage checks.
 //
 // Protocol (one JSON object per line):
-//   startup, stdout: {"ready":true,"decision_type":"clef","llama_cpp_commit":"..."}
+//   startup, stdout: {"ready":true,"decision_type":"clef"|"openjev","llama_cpp_commit":"..."}
 //   stdin:           {"id":"<any>","body":{<systemone request body>}}
 //   stdout:          {"id":"<any>","input_tokens":N}
 //                or  {"id":"<any>","error":{"kind":"invalid_request"|"internal","message":"..."}}
@@ -18,6 +19,7 @@
 #include "log.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -38,7 +40,7 @@ static json error_reply(const json & id, const char * kind, const std::string & 
 
 int main(int argc, char ** argv) {
     if (argc != 2 || std::string(argv[1]) == "--help") {
-        std::fprintf(stderr, "usage: %s <clef-model.gguf>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <decision-model.gguf>\n", argv[0]);
         return 2;
     }
     if (std::string(argv[1]) == "--version") {
@@ -63,12 +65,12 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "not a usable decision model: %s\n", e.what());
         return 1;
     }
-    if (!decision.is_joint()) {
-        std::fprintf(stderr, "model is not a joint (clef) decision model\n");
+    if (!decision.is_joint() && decision.type != COMMON_DECISION_TYPE_OPENJEV) {
+        std::fprintf(stderr, "model is neither a joint nor OpenJev decision model\n");
         return 1;
     }
 
-    emit(json{{"ready", true}, {"decision_type", "clef"}, {"llama_cpp_commit", CLEF_TOKEN_COUNT_LLAMA_COMMIT}});
+    emit(json{{"ready", true}, {"decision_type", decision.is_joint() ? "clef" : "openjev"}, {"llama_cpp_commit", CLEF_TOKEN_COUNT_LLAMA_COMMIT}});
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -89,15 +91,28 @@ int main(int argc, char ** argv) {
 
             const auto questions = decision.parse_questions(body);
             std::vector<raw_buffer> files;
-            const json state = decision.parse_state(body, files);
+            const json state = decision.prepare_state(decision.parse_state(body, files));
             if (!files.empty()) {
-                emit(error_reply(id, "invalid_request", "image input is not supported for clef"));
+                emit(error_reply(id, "invalid_request", "image input is not supported by this text-only counter"));
                 continue;
             }
 
-            server_task task(SERVER_TASK_TYPE_DECISION);
-            decision.fill_task_joint(state, questions, task);
-            emit(json{{"id", id}, {"input_tokens", task.tokens.size()}});
+            size_t longest = 0, total = 0;
+            if (decision.is_joint()) {
+                server_task task(SERVER_TASK_TYPE_DECISION);
+                decision.fill_task_joint(state, questions, files, nullptr, {}, task);
+                longest = total = task.tokens.size();
+            } else {
+                for (const auto & question : questions) {
+                    for (size_t variant = 0; variant < decision.n_variants(question); ++variant) {
+                        server_task task(SERVER_TASK_TYPE_DECISION);
+                        decision.fill_task(state, questions, question, variant, files, nullptr, {}, task);
+                        longest = std::max(longest, task.tokens.size());
+                        total += task.tokens.size();
+                    }
+                }
+            }
+            emit(json{{"id", id}, {"input_tokens", longest}, {"total_input_tokens", total}});
         } catch (const std::invalid_argument & e) {
             emit(error_reply(id, "invalid_request", e.what()));
         } catch (const common_json_error & e) {

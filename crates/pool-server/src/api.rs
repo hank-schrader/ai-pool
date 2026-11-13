@@ -85,7 +85,11 @@ fn model_entry(catalog: &pool_protocol::Catalog, model: &Model, availability: Mo
             "runtime": catalog.runtime(&model.runtime),
             "execution": model.execution,
             "profiles": model.profiles,
-            "capability_contract": if model.execution.chat_json { Some(pool_protocol::runtime::CHAT_JSON_CONTRACT) } else { None },
+            "capability_contract": if model.execution.chat_json {
+                Some(pool_protocol::runtime::CHAT_JSON_CONTRACT)
+            } else if model.backend == pool_protocol::Backend::LlamaServerOpenjev {
+                Some("openjev-text-v1")
+            } else { None },
             "available_runtimes": availability.available_runtimes,
             "capabilities": [model.capability()],
             "streaming": model.backend.streaming(),
@@ -118,6 +122,9 @@ pub async fn miner_catalog(
     if wants("chat-json-v1") {
         let mut catalog = (*state.catalog).clone();
         catalog.models.retain(|model| wants("h2o") || model.backend != pool_protocol::Backend::LlamaServerH2o);
+        catalog
+            .models
+            .retain(|model| wants("openjev-v1") || model.backend != pool_protocol::Backend::LlamaServerOpenjev);
         for model in &mut catalog.models {
             model.profiles.retain(|profile| {
                 (wants("cpu") || profile.accelerator != pool_protocol::Accelerator::Cpu)
@@ -126,6 +133,13 @@ pub async fn miner_catalog(
         }
         catalog.models.retain(|model| !model.profiles.is_empty());
         catalog.default_models.retain(|id| catalog.models.iter().any(|model| &model.id == id));
+        if catalog.default_models.is_empty() {
+            return Err(ApiError::new(
+                StatusCode::UPGRADE_REQUIRED,
+                "miner_outdated",
+                "install pool-miner v0.2.11 or newer for the Elephant decision catalog",
+            ));
+        }
         return Ok(Json(json!({ "catalog_revision": catalog.revision(), "catalog": catalog })));
     }
     let (catalog, revision) = match (wants("offload"), wants("h2o"), wants("cpu")) {

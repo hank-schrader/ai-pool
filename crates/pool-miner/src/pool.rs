@@ -57,7 +57,8 @@ impl Pool {
     pub async fn catalog(&self) -> Result<(Catalog, String), String> {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
         // offload profiles and h2o models are only sent to miners that understand them
-        let mut request = http.get(format!("{}/miner/v1/catalog?features=offload,h2o,cpu,chat-json-v1", self.base));
+        let mut request =
+            http.get(format!("{}/miner/v1/catalog?features=offload,h2o,cpu,chat-json-v1,openjev-v1", self.base));
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }

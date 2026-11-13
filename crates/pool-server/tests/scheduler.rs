@@ -711,7 +711,7 @@ async fn offload_profiles_are_only_sent_to_miners_that_ask() {
 }
 
 #[tokio::test]
-async fn the_shipped_catalog_serves_only_h2o_q8_and_turns_old_miners_away() {
+async fn the_shipped_catalog_serves_elephant_and_turns_old_miners_away() {
     let shipped = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
     let addr = start_with_state(AppState::new(config(), shipped)).await;
     for features in ["", "?features=offload"] {
@@ -720,15 +720,16 @@ async fn the_shipped_catalog_serves_only_h2o_q8_and_turns_old_miners_away() {
         let body: Value = reply.json().await.unwrap();
         assert_eq!(body["error"]["code"], "miner_outdated", "{features:?}");
     }
-    let current: Value = reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload,h2o"))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let current: Value =
+        reqwest::get(format!("http://{addr}/miner/v1/catalog?features=offload,cpu,chat-json-v1,openjev-v1"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
     let ids: Vec<_> = current["catalog"]["models"].as_array().unwrap().iter().map(|model| &model["id"]).collect();
-    assert_eq!(ids, ["h2o-q8"]);
-    assert_eq!(current["catalog"]["default_models"], json!(["h2o-q8"]));
+    assert_eq!(ids, ["elephant-1-q8", "qwen3.8-27b-ud-q3-k-xl"]);
+    assert_eq!(current["catalog"]["default_models"], json!(["elephant-1-q8"]));
 }
 
 #[tokio::test]
@@ -739,7 +740,9 @@ async fn cpu_catalog_is_opt_in_and_old_miners_keep_their_revision() {
         Cuda,
         Metal,
     }
-    let shipped = Catalog::parse(include_str!("../../../config/models.json")).unwrap();
+    let mut shipped = Catalog::parse(include_str!("../../../tests/fixtures/all-models.json")).unwrap();
+    shipped.models.retain(|model| model.id == "h2o-q8");
+    shipped.default_models = vec!["h2o-q8".into()];
     let state = AppState::new(config(), shipped);
     let old_revision = state.h2o_catalog_revision.clone();
     let addr = start_with_state(state).await;

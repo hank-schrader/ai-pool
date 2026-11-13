@@ -49,7 +49,7 @@ impl AppState {
     /// Starts the scheduler task; call inside a Tokio runtime.
     pub fn new(config: Config, catalog: Catalog) -> Self {
         let mut cpu = catalog.clone();
-        cpu.models.retain(|model| !model.execution.chat_json);
+        cpu.models.retain(|model| !model.execution.chat_json && model.backend != Backend::LlamaServerOpenjev);
         cpu.default_models.retain(|id| cpu.models.iter().any(|model| &model.id == id));
         let mut h2o = cpu.clone();
         for model in &mut h2o.models {

@@ -14,7 +14,7 @@ pub(super) async fn probe(
     let filler = "please ".repeat(words);
     let request = async {
         match backend {
-            Backend::LlamaServerSystemone => client
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev => client
                 .systemone(&json!({
                     "state": filler,
                     "questions": {"probe": {"type": "noul", "instructions": "Is this text repetitive?"}}

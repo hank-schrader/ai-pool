@@ -31,7 +31,7 @@ async fn exercise(running: &setup::Running) -> Result<(), String> {
         let client = ready.client.clone();
         println!("== {} ({}, context {})", model.id, ready.profile.id, ready.profile.context_tokens);
         let (operation, body) = match model.backend {
-            Backend::LlamaServerSystemone => (
+            Backend::LlamaServerSystemone | Backend::LlamaServerOpenjev => (
                 Operation::Systemone,
                 json!({
                     "model": model.id,
@@ -65,7 +65,7 @@ async fn exercise(running: &setup::Running) -> Result<(), String> {
 
         let started = Instant::now();
         let mut counted = hosted.count(&validated.count_payload).await;
-        if model.backend == Backend::LlamaServerH2o {
+        if matches!(model.backend, Backend::LlamaServerH2o | Backend::LlamaServerOpenjev) {
             // a count is the longest prompt; the response sums one prompt per question
             let payload = &validated.count_payload;
             let mut total = 0;
