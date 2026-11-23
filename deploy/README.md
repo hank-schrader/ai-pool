@@ -43,9 +43,10 @@ Status: `curl -H "Authorization: Bearer <admin token>" https://pool.example.com/
 The pool also serves a public live status page at `/`, with totals from `/v1/stats` and live SSE at `/v1/stats/stream`.
 
 To update, run `git pull && docker compose up -d --build`. The catalog is baked into the image from `config/models.json`. It serves default
-`elephant-1-q8` (9B Q8_0, 9.53 GB) and opt-in `qwen3.8-27b-ud-q3-k-xl`; removed
-`h2o` and `h2o-q8` IDs return `model_not_found`. Elephant requires v0.2.11 miners
-with `openjev-v1` support and the pinned `llama-b11858` runtime. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
+`elephant-1-q8` (9B Q8_0, 9.53 GB) and opt-in `qwen3.8-27b-ud-q3-k-xl` and
+`qwen3-30b-a3b-q4-k-m`; removed `h2o` and `h2o-q8` IDs return `model_not_found`.
+Elephant requires v0.2.11 miners with `openjev-v1` support and the pinned
+`llama-b11858` runtime. To change it without rebuilding, mount a file over `/app/config/models.json`, then restart.
 
 Cloudflare's proxy (orange cloud) passes WebSockets and SSE through. Miners send a heartbeat every 10 s, which stays well inside Cloudflare's 100 s idle limit.
 
@@ -118,3 +119,18 @@ must fail explicitly. A catalog entry does not qualify inference. Qwen CUDA fit,
 exact count versus prompt usage and schema/template decoding remain pending until
 the owner enables a miner. That release kept H2O as the default; v0.2.11 replaces it with Elephant. Old
 miners do not receive unsupported catalog entries. See the main README for the chat/count and fingerprint contract.
+
+## 0.2.12 Qwen3-30B-A3B cutover
+
+Publish the v0.2.12 miner first. Build the matching `ai-pool-server:0.2.12` image
+from the release binary (the pool host is too small to compile) and keep the
+`0.2.11` image for rollback. Retag the loaded image as `ai-pool-server:latest`,
+then run `docker compose up -d --no-build --force-recreate pool` in the
+deployment directory. Miners fetch the pinned 18.56 GB Qwen3-30B-A3B Q4_K_M GGUF
+directly from Hugging Face and verify its SHA256, so nothing large is copied to
+the pool host.
+
+Check `/readyz` and `/v1/models/qwen3-30b-a3b-q4-k-m` inside the container. With
+no miner, availability stays zero; the catalog entry alone does not qualify
+inference. The 20,480 / 21,248 / 22,784 / 23,552 MiB CUDA profile figures are
+estimates until a miner passes the near-full-context startup probe.

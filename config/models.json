@@ -98,6 +98,67 @@
           "memory_source": "estimate"
         }
       ]
+    },
+    {
+      "id": "qwen3-30b-a3b-q4-k-m",
+      "description": "Qwen3-30B-A3B Q4_K_M conversational JSON chat (Apache-2.0). 30B-parameter Mixture-of-Experts with 3B active parameters and a 40,960-token context. Provisional CUDA profiles; GPU memory and inference qualification pending. Miners download the pinned artifact directly from Hugging Face. Use POST /v1/chat/completions, streaming supported.",
+      "backend": "llama-server-chat",
+      "runtime": "llama-b11374",
+      "weights": {
+        "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
+        "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/resolve/e4d4bafdfb96a411a163846265362aceb0b9c63a/Qwen3-30B-A3B-Q4_K_M.gguf",
+        "size_bytes": 18556685824,
+        "sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5"
+      },
+      "artifact": {
+        "repository": "Qwen/Qwen3-30B-A3B-GGUF",
+        "revision": "e4d4bafdfb96a411a163846265362aceb0b9c63a",
+        "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
+        "size_bytes": 18556685824,
+        "sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5"
+      },
+      "limits": {
+        "request_bytes": 1048576,
+        "default_output_tokens": 1536,
+        "max_output_tokens": 1536
+      },
+      "execution": {
+        "gpu_layers": 99,
+        "batch_tokens": 512,
+        "microbatch_tokens": 512,
+        "allow_ram_fallback": false,
+        "chat_json": true
+      },
+      "profiles": [
+        {
+          "id": "cuda-8192",
+          "accelerator": "cuda",
+          "context_tokens": 8192,
+          "memory_mib": 20480,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "cuda-16384",
+          "accelerator": "cuda",
+          "context_tokens": 16384,
+          "memory_mib": 21248,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "cuda-32768",
+          "accelerator": "cuda",
+          "context_tokens": 32768,
+          "memory_mib": 22784,
+          "memory_source": "estimate"
+        },
+        {
+          "id": "cuda-40960",
+          "accelerator": "cuda",
+          "context_tokens": 40960,
+          "memory_mib": 23552,
+          "memory_source": "estimate"
+        }
+      ]
     }
   ]
 }

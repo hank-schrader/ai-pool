@@ -3,9 +3,9 @@
 A miner serves ai-pool's models from your GPU. It connects out to the pool over
 HTTPS, so it needs no open ports. The examples use `https://pool.example.com`;
 replace it with the address of the pool you join. The default model is
-`elephant-1-q8` (9B, Q8_0, 9.53 GB). Qwen3.8-27B UD-Q3_K_XL remains an opt-in
-chat model. Both `h2o` and `h2o-q8` have been removed from the served catalog;
-requests for them receive `model_not_found`.
+`elephant-1-q8` (9B, Q8_0, 9.53 GB). Qwen3.8-27B UD-Q3_K_XL and
+Qwen3-30B-A3B Q4_K_M remain opt-in chat models. Both `h2o` and `h2o-q8` have
+been removed from the served catalog; requests for them receive `model_not_found`.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ pool-miner --version
 The binaries go to `~/.local/share/ai-pool/<version>` and are linked into
 `~/.local/bin`, which the installer adds to your shell's PATH. Pass
 `--version vX.Y.Z` to pin a release or `--no-modify-path` to leave your shell
-files alone (`curl … | sh -s -- --version v0.2.10`).
+files alone (`curl … | sh -s -- --version v0.2.12`).
 
 Windows (PowerShell):
 
@@ -70,7 +70,7 @@ pool-miner --version
 ```
 
 It installs into `%LOCALAPPDATA%\ai-pool\<version>` and adds it to your user
-PATH. Pin a release with `.\install.ps1 -Version v0.2.10`.
+PATH. Pin a release with `.\install.ps1 -Version v0.2.12`.
 
 ## 2. Check the machine
 
@@ -244,6 +244,22 @@ no vision/projector or draft/MTP, and no automatic RAM fallback. Its 14,586 MiB
 memory estimate is not measured peak VRAM or a guarantee of fit. GPU memory,
 template behavior, structured decoding and throughput await live qualification.
 An unavailable miner returns an explicit error; no estimated token counts are used.
+
+## Qwen3-30B-A3B chat (0.2.12)
+
+`qwen3-30b-a3b-q4-k-m` is the Apache-2.0 30B-parameter Mixture-of-Experts Qwen3
+model (3B active parameters, 40,960-token context) at Q4_K_M. It uses the same
+`llama-b11374` runtime. Miners download the 18,556,685,824-byte GGUF directly
+from `Qwen/Qwen3-30B-A3B-GGUF` at revision
+`e4d4bafdfb96a411a163846265362aceb0b9c63a` and verify SHA256
+`0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5` locally.
+
+Select it with `--models qwen3-30b-a3b-q4-k-m`. The CUDA profiles at 8,192,
+16,384, 32,768 and 40,960 input-plus-output tokens are estimates, not measured
+peak VRAM or a guarantee of fit: about 20.5 GiB, 21.2 GiB, 22.8 GiB and 23.6 GiB.
+A 24 GiB GPU therefore plans `cuda-32768`; the startup probe still has to pass a
+near-full-context request before capacity is advertised. GPU memory, template
+behavior, structured decoding and throughput await live qualification.
 
 `POST /v1/chat/completions` accepts nested `response_format.json_schema.schema`,
 `chat_template_kwargs` (including boolean `enable_thinking` and `preserve_thinking`),

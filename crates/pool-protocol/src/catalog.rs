@@ -153,7 +153,7 @@ mod tests {
     fn shipped_catalog_serves_elephant_and_opt_in_chat() {
         let catalog = Catalog::parse(SHIPPED).expect("config/models.json is valid");
         let ids: Vec<_> = catalog.models.iter().map(|model| model.id.as_str()).collect();
-        assert_eq!(ids, ["elephant-1-q8", "qwen3.8-27b-ud-q3-k-xl"]);
+        assert_eq!(ids, ["elephant-1-q8", "qwen3.8-27b-ud-q3-k-xl", "qwen3-30b-a3b-q4-k-m"]);
         assert!(catalog.model("h2o").is_none());
         assert_eq!(catalog.default_models, ["elephant-1-q8"]);
         let all = Catalog::parse(ALL_MODELS).expect("tests/fixtures/all-models.json is valid");
