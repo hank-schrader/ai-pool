@@ -100,27 +100,27 @@
       ]
     },
     {
-      "id": "qwen3-30b-a3b-q4-k-m",
-      "description": "Qwen3-30B-A3B Q4_K_M conversational JSON chat (Apache-2.0). 30B-parameter Mixture-of-Experts with 3B active parameters and a 40,960-token context. Provisional CUDA profiles; GPU memory and inference qualification pending. Miners download the pinned artifact directly from Hugging Face. Use POST /v1/chat/completions, streaming supported.",
+      "id": "qwen2.5-coder-14b-q5-k-m",
+      "description": "Qwen2.5-Coder-14B-Instruct Q5_K_M conversational JSON chat (Apache-2.0). 14B dense coding model (10.51 GB weights) sized to fit 16 GiB CUDA GPUs at 8K/16K context and 24 GiB GPUs at 32K context. Provisional CUDA profiles; GPU memory and inference qualification pending. Miners download the pinned artifact directly from Hugging Face. Use POST /v1/chat/completions, streaming supported.",
       "backend": "llama-server-chat",
       "runtime": "llama-b11374",
       "weights": {
-        "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
-        "url": "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/resolve/e4d4bafdfb96a411a163846265362aceb0b9c63a/Qwen3-30B-A3B-Q4_K_M.gguf",
-        "size_bytes": 18556685824,
-        "sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5"
+        "filename": "qwen2.5-coder-14b-instruct-q5_k_m.gguf",
+        "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/d0a692ef765eefbf2fabb130b3cb2e8917e3d225/qwen2.5-coder-14b-instruct-q5_k_m.gguf",
+        "size_bytes": 10508873152,
+        "sha256": "98ab25e0132e3f1e6d3554e1b64de2b5021908819b740d9c208430117e49a775"
       },
       "artifact": {
-        "repository": "Qwen/Qwen3-30B-A3B-GGUF",
-        "revision": "e4d4bafdfb96a411a163846265362aceb0b9c63a",
-        "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
-        "size_bytes": 18556685824,
-        "sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5"
+        "repository": "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
+        "revision": "d0a692ef765eefbf2fabb130b3cb2e8917e3d225",
+        "filename": "qwen2.5-coder-14b-instruct-q5_k_m.gguf",
+        "size_bytes": 10508873152,
+        "sha256": "98ab25e0132e3f1e6d3554e1b64de2b5021908819b740d9c208430117e49a775"
       },
       "limits": {
         "request_bytes": 1048576,
         "default_output_tokens": 1536,
-        "max_output_tokens": 1536
+        "max_output_tokens": 4096
       },
       "execution": {
         "gpu_layers": 99,
@@ -134,28 +134,21 @@
           "id": "cuda-8192",
           "accelerator": "cuda",
           "context_tokens": 8192,
-          "memory_mib": 20480,
+          "memory_mib": 12800,
           "memory_source": "estimate"
         },
         {
           "id": "cuda-16384",
           "accelerator": "cuda",
           "context_tokens": 16384,
-          "memory_mib": 21248,
+          "memory_mib": 14336,
           "memory_source": "estimate"
         },
         {
           "id": "cuda-32768",
           "accelerator": "cuda",
           "context_tokens": 32768,
-          "memory_mib": 22784,
-          "memory_source": "estimate"
-        },
-        {
-          "id": "cuda-40960",
-          "accelerator": "cuda",
-          "context_tokens": 40960,
-          "memory_mib": 23552,
+          "memory_mib": 17408,
           "memory_source": "estimate"
         }
       ]

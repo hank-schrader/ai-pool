@@ -728,7 +728,7 @@ async fn the_shipped_catalog_serves_elephant_and_turns_old_miners_away() {
             .await
             .unwrap();
     let ids: Vec<_> = current["catalog"]["models"].as_array().unwrap().iter().map(|model| &model["id"]).collect();
-    assert_eq!(ids, ["elephant-1-q8", "qwen3.8-27b-ud-q3-k-xl", "qwen3-30b-a3b-q4-k-m"]);
+    assert_eq!(ids, ["elephant-1-q8", "qwen3.8-27b-ud-q3-k-xl", "qwen2.5-coder-14b-q5-k-m"]);
     assert_eq!(current["catalog"]["default_models"], json!(["elephant-1-q8"]));
 }
 
